@@ -1,0 +1,7 @@
+node_modules/
+.env
+data/users.json
+data/sounds.json
+data/upload-*
+.DS_Store
+Thumbs.db

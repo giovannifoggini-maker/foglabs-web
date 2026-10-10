@@ -1,0 +1,9 @@
+{
+  "name": "vybex-local-platform",
+  "version": "1.4.0",
+  "private": true,
+  "description": "VYBEX — free local audio and community platform with persistent accounts, per-account sound uploads, advanced editor, radio, DJ and real Discord webhook sharing.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
