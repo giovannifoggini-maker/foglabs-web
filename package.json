@@ -1,0 +1,17 @@
+{
+  "name": "foglabs-ecosystem",
+  "version": "1.5.0",
+  "private": true,
+  "description": "FogLabs ecosystem: public landing, VYBEX, Nametag Creator, Randomizer and MineWiki project page.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js && node --check public/nametag.js && node --check public/randomizer.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

@@ -1,0 +1,23 @@
+# Render Blueprint for a free public beta. Free Postgres expires after 30 days; see README_DEPLOY.md.
+services:
+  - type: web
+    name: foglabs-web
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: foglabs-db
+          property: connectionString
+      - key: VIP_EMAIL_CODE
+        sync: false
+databases:
+  - name: foglabs-db
+    databaseName: foglabs
+    user: foglabs
+    plan: free

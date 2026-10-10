@@ -2,8 +2,8 @@
 title FogLabs - Creative Technology Lab
 where node >nul 2>nul
 if errorlevel 1 (
-  echo Node.js 22+ non trovato.
-  echo Installa Node.js 22+ e rilancia.
+  echo Node.js 20+ non trovato.
+  echo Installa Node.js 20+ e rilancia.
   pause
   exit /b 1
 )
