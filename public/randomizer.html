@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#100f1d">
+  <meta name="description" content="FogLabs Randomizer: crea codici casuali direttamente nel browser, nell'ecosistema FogLabs.">
+  <title>FogLabs Randomizer</title>
+  <link rel="icon" type="image/png" href="/foglabs-logo.png">
+  <link rel="stylesheet" href="/randomizer.css">
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <header class="sitebar">
+    <a class="brand" href="/foglabs" aria-label="Torna alla home FogLabs">
+      <img src="/foglabs-logo.png" alt="" width="42" height="42">
+      <span><strong>FogLabs</strong><small>CREATIVE TECHNOLOGY LAB</small></span>
+    </a>
+    <div class="crumb"><span>FOGLABS</span><b>/</b><strong>RANDOMIZER</strong></div>
+    <a class="back-link" href="/foglabs">← <span>Torna a FogLabs</span></a>
+  </header>
+
+  <main class="page-wrap">
+    <section class="hero">
+      <span class="eyebrow"><span class="live-dot"></span> FOGLABS TOOL · 01</span>
+      <div class="hero-title-line"><div class="hero-icon" aria-hidden="true">🎲</div><div><h1>FogLabs <span>Randomizer</span></h1><p>Un piccolo strumento. Un intero ecosistema.</p></div></div>
+      <p class="intro">Scrivi un testo di riferimento e genera un codice casuale della stessa lunghezza, fino a un massimo di 15 caratteri. Tutto avviene direttamente nel browser.</p>
+    </section>
+
+    <section class="tool-card" aria-labelledby="toolTitle">
+      <div class="tool-head"><div><span class="eyebrow">GENERATOR</span><h2 id="toolTitle">Genera un codice</h2></div><span class="status-pill"><span class="live-dot"></span> Pronto</span></div>
+      <label for="seedInput" class="field-label">Testo di riferimento</label>
+      <div class="input-wrap"><input id="seedInput" type="text" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="Scrivi qualcosa…" aria-describedby="seedHint"><span id="seedLength" class="length-pill">0 caratteri</span></div>
+      <p id="seedHint" class="field-hint">Ogni carattere determina la lunghezza del codice; il testo originale non viene inserito nel risultato.</p>
+
+      <div class="result-label-row"><label for="resultCode" class="field-label">Il tuo codice casuale</label><span id="resultLength" class="result-length">0 / 15</span></div>
+      <div class="result-wrap"><input id="resultCode" class="result-input" type="text" readonly aria-live="polite" aria-label="Codice casuale generato" placeholder="Il codice apparirà qui"><button id="copyBtn" class="copy-btn" type="button" disabled><span aria-hidden="true">⧉</span> Copia</button></div>
+      <div class="button-row"><button id="generateBtn" class="primary-btn" type="button" disabled><span aria-hidden="true">↻</span> Rigenera codice</button><button id="clearBtn" class="secondary-btn" type="button">Pulisci</button></div>
+      <p id="statusText" class="status-text" role="status" aria-live="polite">Inserisci un testo per iniziare.</p>
+    </section>
+
+    <section class="info-grid" aria-label="Informazioni">
+      <article class="info-card"><span class="info-icon">⚡</span><div><strong>Immediato</strong><p>Il codice si aggiorna mentre scrivi.</p></div></article>
+      <article class="info-card"><span class="info-icon">🔒</span><div><strong>Locale</strong><p>Il testo resta in questa pagina e non viene inviato a un'API.</p></div></article>
+      <article class="info-card"><span class="info-icon">↗</span><div><strong>Connesso a FogLabs</strong><p>Apri il tool dall'area “Altri modelli” di VYBEX.</p></div></article>
+    </section>
+
+    <footer class="site-footer"><a href="/foglabs">FogLabs</a><span>·</span><span>FogLabs Randomizer</span><span class="footer-spacer"></span><span>CREATE · CONNECT · PLAY</span></footer>
+  </main>
+  <script src="/randomizer.js" defer></script>
+</body>
+</html>
