@@ -16,7 +16,9 @@ const AUTO_SELECT_PORT = !process.env.PORT;
 let ACTIVE_PORT = PORT;
 let dbPool = null;
 let dbWriteQueue = Promise.resolve();
-const VIP_EMAIL_CODE = String(process.env.VIP_EMAIL_CODE || "").trim();
+// Codice VIP impostato su richiesta dell'utente. Rimane server-side: non viene inviato al browser.
+// NOTA: se il repository GitHub e' pubblico, questo codice e' visibile a chiunque possa leggere server.js.
+const VIP_EMAIL_CODE = "ciaosonomariowahuu";
 const VIP_ACCOUNT_EMAIL = "vip@local.soundboard";
 const rateBuckets = new Map();
 const ROOT = __dirname;

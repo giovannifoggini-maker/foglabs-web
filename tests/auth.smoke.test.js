@@ -47,7 +47,7 @@ test('registration, email/password login, and VIP code validation', { timeout: 3
     const origin = `http://127.0.0.1:${port}`;
     child = spawn(process.execPath, [path.join(temporaryRoot, 'server.js')], {
       cwd: temporaryRoot,
-      env: { ...process.env, NODE_ENV: 'development', PORT: String(port), NO_BROWSER: '1', VIP_EMAIL_CODE: 'test-vip-code' },
+      env: { ...process.env, NODE_ENV: 'development', PORT: String(port), NO_BROWSER: '1', VIP_EMAIL_CODE: '' },
       stdio: 'ignore'
     });
     await waitForServer(origin, child);
@@ -78,7 +78,7 @@ test('registration, email/password login, and VIP code validation', { timeout: 3
 
     const vip = await fetch(`${origin}/api/vip/unlock`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: 'test-vip-code' })
+      body: JSON.stringify({ code: 'ciaosonomariowahuu' })
     });
     assert.equal(vip.status, 200);
     const vipCookie = cookieFrom(vip);

@@ -1,6 +1,6 @@
 {
   "name": "foglabs",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "private": true,
   "description": "FogLabs and VYBEX web app with distinct login, registration, and server-verified VIP access.",
   "main": "server.js",

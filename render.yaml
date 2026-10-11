@@ -14,8 +14,6 @@ services:
         fromDatabase:
           name: foglabs-db
           property: connectionString
-      - key: VIP_EMAIL_CODE
-        sync: false
 databases:
   - name: foglabs-db
     databaseName: foglabs

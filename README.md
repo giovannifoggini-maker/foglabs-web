@@ -12,7 +12,7 @@ Questa versione separa chiaramente **Accedi**, **Crea account** e **Sblocca VIP*
 ## Avvio locale
 
 1. Copia `.env.example` in `.env`.
-2. In `.env`, imposta `NODE_ENV=development`, `PORT=3100` e `VIP_EMAIL_CODE` con un codice di prova scelto da te.
+2. In `.env`, imposta `NODE_ENV=development` e `PORT=3100`. Il codice VIP richiesto è configurato nel backend come `ciaosonomariowahuu`.
 3. Esegui `npm install`, poi `npm start`.
 4. Apri `http://localhost:3100/vybex`.
 
@@ -22,10 +22,10 @@ Questa versione separa chiaramente **Accedi**, **Crea account** e **Sblocca VIP*
 
 1. Pubblica i file di questo progetto in un repository GitHub.
 2. Crea un Web Service Render usando `render.yaml`.
-3. Nelle variabili ambiente del servizio Render configura `VIP_EMAIL_CODE` con il codice VIP scelto. Configura `DATABASE_URL` collegandolo al database PostgreSQL del servizio.
+3. Configura `DATABASE_URL` collegandolo al database PostgreSQL del servizio. Il codice VIP `ciaosonomariowahuu` è già impostato lato server e non richiede una variabile aggiuntiva su Render.
 4. Verifica `https://URL-DEL-BACKEND/health`: deve rispondere JSON con `ok: true` e `database: true`.
 
-Il codice VIP non è scritto in `public/app.js`, `server.js`, nei README o nei file di esempio: resta un segreto del backend. Se cambi il codice, modifica la variabile su Render e ridistribuisci/riavvia il servizio.
+Il codice VIP è impostato soltanto nel backend (`server.js`), non nel frontend. **Attenzione:** se il repository GitHub è pubblico, il codice può essere letto da chiunque apra il sorgente. Per un codice davvero privato, usa una variabile segreta su Render e mantieni privato il repository oppure rimuovi il valore predefinito prima di pubblicarlo. Dopo ogni modifica al backend, ridistribuisci/riavvia il servizio Render.
 
 ## Pubblicazione su Cloudflare Pages
 
@@ -35,7 +35,7 @@ Il codice VIP non è scritto in `public/app.js`, `server.js`, nei README o nei f
 4. In **Settings → Variables and Secrets**, imposta `BACKEND_URL` all'origine HTTPS del backend Render, ad esempio `https://nome-servizio.onrender.com`, senza slash o percorso finale. Configura la variabile per Production e per Preview se vuoi usare anche le anteprime.
 5. Avvia una nuova distribuzione e controlla `https://TUO-DOMINIO/health`.
 
-Il middleware inoltra `/api/*`, `/auth/*`, `/audio/*` e `/health` al backend; le pagine e gli altri asset statici restano su Cloudflare Pages. `VIP_EMAIL_CODE` va su Render, non su Cloudflare Pages e non nel frontend.
+Il middleware inoltra `/api/*`, `/auth/*`, `/audio/*` e `/health` al backend; le pagine e gli altri asset statici restano su Cloudflare Pages. Il codice VIP è impostato nel backend (`server.js`); non aggiungerlo a Cloudflare Pages né al frontend.
 
 ## Flussi di accesso
 
