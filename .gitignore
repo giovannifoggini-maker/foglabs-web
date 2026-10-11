@@ -1,7 +1,10 @@
 node_modules/
 .env
-data/users.json
-data/sounds.json
-data/upload-*
+.env.*
+!.env.example
 .DS_Store
 Thumbs.db
+data/users.json
+data/sounds.json
+data/public-chats.json
+data/upload-*

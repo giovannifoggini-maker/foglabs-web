@@ -1,8 +1,8 @@
 {
-  "name": "foglabs-ecosystem",
+  "name": "foglabs",
   "version": "1.5.0",
   "private": true,
-  "description": "FogLabs ecosystem: public landing, VYBEX, Nametag Creator, Randomizer and MineWiki project page.",
+  "description": "FogLabs website and creative projects.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
