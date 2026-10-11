@@ -11,14 +11,14 @@ const crypto = require("crypto");
   try{for(const line of fs.readFileSync(envPath,"utf8").split(/\r?\n/)){const m=line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^(["'])(.*)\1$/,"$2")}}catch{}
 })();
 
+const APP_VERSION = "1.5.5";
 const PORT = Number(process.env.PORT || 3100);
 const AUTO_SELECT_PORT = !process.env.PORT;
 let ACTIVE_PORT = PORT;
 let dbPool = null;
 let dbWriteQueue = Promise.resolve();
-// Codice VIP impostato su richiesta dell'utente. Rimane server-side: non viene inviato al browser.
-// NOTA: se il repository GitHub e' pubblico, questo codice e' visibile a chiunque possa leggere server.js.
-const VIP_EMAIL_CODE = "ciaosonomariowahuu";
+// Keep this secret in the hosting provider's environment variables, never in the public repository.
+const VIP_EMAIL_CODE = String(process.env.VIP_EMAIL_CODE || "").trim();
 const VIP_ACCOUNT_EMAIL = "vip@local.soundboard";
 const rateBuckets = new Map();
 const ROOT = __dirname;
@@ -58,12 +58,25 @@ function saveJson(file,value){
   fs.writeFileSync(file,JSON.stringify(value,null,2));
   return Promise.resolve();
 }
+function cloneRecord(value){return value==null?value:JSON.parse(JSON.stringify(value));}
 function queueDatabasePersist(){
   if(!dbPool) return Promise.resolve();
-  const next=dbWriteQueue.catch(()=>{}).then(()=>dbPool.query(
-    "INSERT INTO foglabs_state (id, state, updated_at) VALUES (1, $1::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()",
-    [JSON.stringify({users, sounds, publicChats})]
-  )).then(()=>undefined);
+  const next=dbWriteQueue.catch(()=>{}).then(async()=>{
+    // Accounts are canonical in foglabs_users. Persist only records changed by this
+    // process, so an instance with a stale in-memory map cannot overwrite other users.
+    for(const [email,record] of Object.entries(users)){
+      if(JSON.stringify(persistedUsers[email] ?? null)===JSON.stringify(record)) continue;
+      await dbPool.query(
+        "INSERT INTO foglabs_users (email, record, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (email) DO UPDATE SET record = EXCLUDED.record, updated_at = NOW()",
+        [email,JSON.stringify(record)]
+      );
+      persistedUsers[email]=cloneRecord(record);
+    }
+    await dbPool.query(
+      "INSERT INTO foglabs_state (id, state, updated_at) VALUES (1, $1::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()",
+      [JSON.stringify({users, sounds, publicChats})]
+    );
+  }).then(()=>undefined);
   dbWriteQueue=next;
   next.catch(err=>console.error("Database persist failed:",err.message));
   return next;
@@ -79,16 +92,38 @@ async function initDatabase(){
   dbPool=new Pool(options);
   await dbPool.query("CREATE TABLE IF NOT EXISTS foglabs_state (id integer PRIMARY KEY CHECK (id = 1), state jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT NOW())");
   await dbPool.query("CREATE TABLE IF NOT EXISTS foglabs_assets (name text PRIMARY KEY, content_type text NOT NULL, data bytea NOT NULL, updated_at timestamptz NOT NULL DEFAULT NOW())");
+  await dbPool.query("CREATE TABLE IF NOT EXISTS foglabs_users (email text PRIMARY KEY, record jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT NOW())");
+
   const result=await dbPool.query("SELECT state FROM foglabs_state WHERE id = 1");
+  let legacyUsers={};
   if(result.rows.length){
     const state=result.rows[0].state||{};
-    users=state.users&&typeof state.users==="object"?state.users:{};
+    legacyUsers=state.users&&typeof state.users==="object"?state.users:{};
     sounds=Array.isArray(state.sounds)&&state.sounds.length?state.sounds:demoSounds;
     publicChats=Array.isArray(state.publicChats)?state.publicChats:[];
   } else {
-    await dbPool.query("INSERT INTO foglabs_state (id,state,updated_at) VALUES (1,$1::jsonb,NOW())",[JSON.stringify({users,sounds,publicChats})]);
+    legacyUsers={...users};
+    await dbPool.query("INSERT INTO foglabs_state (id,state,updated_at) VALUES (1,$1::jsonb,NOW())",[JSON.stringify({users:legacyUsers,sounds,publicChats})]);
   }
-  console.log("PostgreSQL collegato: account, chat e libreria salvati nel database.");
+
+  // One-time-compatible migration from the legacy JSONB account map.
+  for(const [email,record] of Object.entries(legacyUsers)){
+    if(!record || typeof record!=="object") continue;
+    await dbPool.query(
+      "INSERT INTO foglabs_users (email, record, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (email) DO NOTHING",
+      [email,JSON.stringify({...record,email:record.email||email})]
+    );
+  }
+  const accounts=await dbPool.query("SELECT email, record FROM foglabs_users ORDER BY email");
+  users={};
+  for(const row of accounts.rows){
+    if(row.record&&typeof row.record==="object") users[row.email]={...row.record,email:row.record.email||row.email};
+  }
+  persistedUsers=cloneRecord(users)||{};
+  // Keep the legacy state row in sync for older app builds, without using it as the
+  // canonical source of account records anymore.
+  await dbPool.query("UPDATE foglabs_state SET state = jsonb_set(state, '{users}', $1::jsonb, true), updated_at = NOW() WHERE id = 1",[JSON.stringify(users)]);
+  console.log(`PostgreSQL collegato: ${Object.keys(users).length} account caricati; account persistenti in foglabs_users.`);
 }
 function consumeRateLimit(req,key,max=12,windowMs=15*60*1000){
   const forwarded=String(req.headers["x-forwarded-for"]||"").split(",").pop().trim();
@@ -117,6 +152,7 @@ async function sendStoredAudio(res,fileName){
   return false;
 }
 let users=loadJson(USERS_FILE,{});
+let persistedUsers={};
 let sounds=loadJson(SOUNDS_FILE,demoSounds);
 if(!Array.isArray(sounds)||!sounds.length) sounds=demoSounds;
 
@@ -136,13 +172,51 @@ function cookie(sid){return `dsb_session=${sid}; Path=/; HttpOnly; SameSite=Lax$
 function requireAuth(req,res){const user=sessionUser(req);if(!user){send(res,401,{error:"not_authenticated"});return null}return user}
 function safeName(v,fallback="Uploaded sound"){return String(v||fallback).replace(/[\\/:*?"<>|]/g," ").trim().slice(0,60)||fallback}
 function publicSound(s){return {...s}}
-function serveFile(res,filePath){const abs=path.resolve(filePath);if(!abs.startsWith(path.resolve(ROOT)))return send(res,403,"Forbidden","text/plain; charset=utf-8");if(!fs.existsSync(abs))return send(res,404,"Not found","text/plain; charset=utf-8");const ext=path.extname(abs).toLowerCase();const types={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".wav":"audio/wav",".mp3":"audio/mpeg",".ogg":"audio/ogg",".m4a":"audio/mp4",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png"};const stat=fs.statSync(abs);res.writeHead(200,{"Content-Type":types[ext]||"application/octet-stream","Content-Length":stat.size});fs.createReadStream(abs).pipe(res)}
+function serveFile(res,filePath){const abs=path.resolve(filePath);if(!abs.startsWith(path.resolve(ROOT)))return send(res,403,"Forbidden","text/plain; charset=utf-8");if(!fs.existsSync(abs))return send(res,404,"Not found","text/plain; charset=utf-8");const ext=path.extname(abs).toLowerCase();const types={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".wav":"audio/wav",".mp3":"audio/mpeg",".ogg":"audio/ogg",".m4a":"audio/mp4",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png"};const stat=fs.statSync(abs);const cacheControl=[".html",".js",".css"].includes(ext)?"no-cache, no-store, must-revalidate":"public, max-age=300";res.writeHead(200,{"Content-Type":types[ext]||"application/octet-stream","Content-Length":stat.size,"Cache-Control":cacheControl,"X-Content-Type-Options":"nosniff"});fs.createReadStream(abs).pipe(res)}
 function parseBody(req,cb){let raw="",tooLarge=false;req.on("data",c=>{if(tooLarge)return;if(raw.length+c.length>1024*1024){tooLarge=true;raw="";return;}raw+=c;});req.on("end",()=>{if(tooLarge)return cb(new Error("body_too_large"));try{cb(null,JSON.parse(raw||"{}"))}catch(e){cb(e)}})}
 function parseMultipart(req,boundary,onDone){const chunks=[];req.on("data",c=>chunks.push(c));req.on("end",()=>{const body=Buffer.concat(chunks),marker=Buffer.from("--"+boundary);let idx=0,file=null;while(true){const start=body.indexOf(marker,idx);if(start<0)break;const next=body.indexOf(marker,start+marker.length);if(next<0)break;const part=body.slice(start+marker.length+2,next-2);const sep=part.indexOf(Buffer.from("\r\n\r\n"));if(sep>=0){const head=part.slice(0,sep).toString("utf8"),content=part.slice(sep+4);const fn=head.match(/filename="([^"]*)"/i),ct=head.match(/Content-Type:\s*([^\r\n]+)/i);if(fn&&fn[1])file={filename:fn[1],type:ct?ct[1].trim():"application/octet-stream",data:content}}idx=next}onDone(file)})}
 function validEmail(v){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(v)}
 function validUsername(v){return /^[a-zA-Z0-9_.-]{3,24}$/.test(v)}
 function hashPassword(password,salt=crypto.randomBytes(16).toString("hex")){return {salt,hash:crypto.scryptSync(password,salt,64).toString("hex")}}
 function verifyPassword(password,record){try{const hash=crypto.scryptSync(password,record.salt,64).toString("hex");return crypto.timingSafeEqual(Buffer.from(hash,"hex"),Buffer.from(record.hash,"hex"))}catch{return false}}
+async function findUserByEmail(email){
+  if(!dbPool) return users[email]||null;
+  const result=await dbPool.query("SELECT record FROM foglabs_users WHERE email=$1",[email]);
+  if(!result.rows.length){delete users[email];delete persistedUsers[email];return null;}
+  const record={...result.rows[0].record,email:result.rows[0].record.email||email};
+  users[email]=record;
+  persistedUsers[email]=cloneRecord(record);
+  return record;
+}
+async function insertNewUser(record){
+  const email=record.email;
+  if(dbPool){
+    const result=await dbPool.query(
+      "INSERT INTO foglabs_users (email, record, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (email) DO NOTHING RETURNING email",
+      [email,JSON.stringify(record)]
+    );
+    if(!result.rows.length)return false;
+    users[email]=record;
+    persistedUsers[email]=cloneRecord(record);
+    return true;
+  }
+  if(users[email])return false;
+  users[email]=record;
+  try{await saveJson(USERS_FILE,users);return true;}
+  catch(err){delete users[email];throw err;}
+}
+async function persistUserRecord(record){
+  users[record.email]=record;
+  if(dbPool){
+    await dbPool.query(
+      "INSERT INTO foglabs_users (email, record, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (email) DO UPDATE SET record = EXCLUDED.record, updated_at = NOW()",
+      [record.email,JSON.stringify(record)]
+    );
+    persistedUsers[record.email]=cloneRecord(record);
+    return;
+  }
+  await saveJson(USERS_FILE,users);
+}
 function userRecord(user){return user&&user.email?users[user.email]||null:null}
 function visibleSounds(user){return sounds.filter(s=>!s.ownerId || s.ownerId===user.id)}
 function saveUserProgress(user,progress){const rec=userRecord(user);if(!rec)return false;const safe={
@@ -182,7 +256,7 @@ const server=http.createServer(async (req,res)=>{
   const u=new URL(req.url,`http://${req.headers.host}`);
   if(u.pathname==="/health" && req.method==="GET"){
     if(dbPool){try{await dbPool.query("SELECT 1");}catch{return send(res,503,{ok:false,database:false});}}
-    return send(res,200,{ok:true,database:!!dbPool,environment:process.env.NODE_ENV==="production"?"production":"development"});
+    return send(res,200,{ok:true,database:!!dbPool,accountStore:dbPool?"postgres-users-table":"local-json",vipConfigured:!!VIP_EMAIL_CODE,version:APP_VERSION,environment:process.env.NODE_ENV==="production"?"production":"development"});
   }
   if(req.method==="POST" && ["/api/account","/api/login","/api/register","/api/vip/unlock"].includes(u.pathname)){
     const key=u.pathname==="/api/vip/unlock"?"vip":u.pathname==="/api/login"?"login":u.pathname==="/api/register"?"register":"account";
@@ -204,7 +278,8 @@ const server=http.createServer(async (req,res)=>{
     const email=String(b.email||"").trim().toLowerCase();
     const password=String(b.password||"");
     if(!validEmail(email))return send(res,400,{error:"invalid_email"});
-    const rec=users[email];
+    let rec;
+    try{rec=await findUserByEmail(email);}catch(err){console.error("Account lookup failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
     if(!rec || !password || !verifyPassword(password,rec))return send(res,403,{error:"invalid_credentials"});
     const sid=crypto.randomBytes(18).toString("hex");
     const session={id:rec.id,email:rec.email,username:rec.username,canEdit:!!rec.canEdit,vip:!!rec.vip};
@@ -220,14 +295,14 @@ const server=http.createServer(async (req,res)=>{
     const password2=String(b.password2||"");
     if(!validEmail(email))return send(res,400,{error:"invalid_email"});
     if(email===VIP_ACCOUNT_EMAIL)return send(res,400,{error:"reserved_email"});
-    if(users[email])return send(res,409,{error:"account_exists"});
     if(!validUsername(username))return send(res,400,{error:"invalid_username"});
     if(password.length<8)return send(res,400,{error:"weak_password"});
     if(password!==password2)return send(res,400,{error:"password_mismatch"});
     const hp=hashPassword(password);
     const rec={id:"user-"+crypto.randomBytes(8).toString("hex"),email,username,salt:hp.salt,hash:hp.hash,createdAt:new Date().toISOString(),vip:false,canEdit:true,progress:{favorites:[],scenes:{},preferences:{rememberFavorites:true,stopOthers:false,keyboardHints:true},queue:[]}};
-    users[email]=rec;
-    try{await saveJson(USERS_FILE,users);}catch(err){delete users[email];console.error("Account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
+    let created;
+    try{created=await insertNewUser(rec);}catch(err){console.error("Account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
+    if(!created)return send(res,409,{error:"account_exists"});
     const sid=crypto.randomBytes(18).toString("hex");
     sessions.set(sid,{id:rec.id,email:rec.email,username:rec.username,canEdit:true,vip:false});
     visitorCount+=1;
@@ -235,57 +310,37 @@ const server=http.createServer(async (req,res)=>{
   });
   if(u.pathname==="/api/account"&&req.method==="POST") return parseBody(req,async(err,b)=>{
     if(err)return send(res,400,{error:"invalid_json"});
-
     const email=String(b.email||"").trim().toLowerCase();
     const username=String(b.username||"").trim();
     const password=String(b.password||"");
     const password2=String(b.password2||"");
-
     if(!validEmail(email))return send(res,400,{error:"invalid_email"});
     if(email===VIP_ACCOUNT_EMAIL)return send(res,400,{error:"reserved_email"});
 
-    // Existing accounts sign in with email + password. Username and password confirmation
-    // are registration-only fields, so an existing user does not need to fill them again.
-    const wasExisting=Boolean(users[email]);
-    let rec=users[email];
+    let rec;
+    try{rec=await findUserByEmail(email);}catch(err){console.error("Account lookup failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
+    const wasExisting=Boolean(rec);
     if(rec){
       if(!password || !verifyPassword(password,rec))return send(res,403,{error:"wrong_password"});
     } else {
       if(!validUsername(username))return send(res,400,{error:"invalid_username"});
       if(password.length<8)return send(res,400,{error:"weak_password"});
       if(password!==password2)return send(res,400,{error:"password_mismatch"});
-
       const hp=hashPassword(password);
-      rec={
-        id:"user-"+crypto.randomBytes(8).toString("hex"),
-        email,
-        username,
-        salt:hp.salt,
-        hash:hp.hash,
-        createdAt:new Date().toISOString(),
-        vip:false,
-        canEdit:true,
-        progress:{}
-      };
-      users[email]=rec;
+      rec={id:"user-"+crypto.randomBytes(8).toString("hex"),email,username,salt:hp.salt,hash:hp.hash,createdAt:new Date().toISOString(),vip:false,canEdit:true,progress:{}};
       try{
-        await saveJson(USERS_FILE,users);
-      }catch(err){
-        delete users[email];
-        console.error("Account persist failed:",err.message);
-        return send(res,503,{error:"storage_unavailable"});
-      }
+        const created=await insertNewUser(rec);
+        if(!created){
+          rec=await findUserByEmail(email);
+          if(!rec)return send(res,503,{error:"storage_unavailable"});
+          return send(res,409,{error:"account_exists"});
+        }
+      }catch(err){console.error("Account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
     }
-
     const sid=crypto.randomBytes(18).toString("hex");
     const session={id:rec.id,email:rec.email,username:rec.username,canEdit:true,vip:!!rec.vip};
-    sessions.set(sid,session);
-    visitorCount+=1;
-    return send(res,200,{
-      ok:true,
-      created:!wasExisting,
-      user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:true,vip:!!rec.vip}
-    },"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
+    sessions.set(sid,session);visitorCount+=1;
+    return send(res,200,{ok:true,created:!wasExisting,user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:true,vip:!!rec.vip}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
   });
   if(u.pathname==="/api/email"&&req.method==="POST"){return send(res,410,{error:"account_required"})}
   if(u.pathname==="/api/vip/unlock"&&req.method==="POST"){
@@ -295,13 +350,19 @@ const server=http.createServer(async (req,res)=>{
       const code=String(b.code||b.email||"").trim();
       const provided=Buffer.from(code,"utf8"),expected=Buffer.from(VIP_EMAIL_CODE,"utf8");
       if(provided.length!==expected.length || !crypto.timingSafeEqual(provided,expected))return send(res,403,{error:"invalid_code"});
-      let rec=users[VIP_ACCOUNT_EMAIL];
+      let rec;
+      try{rec=await findUserByEmail(VIP_ACCOUNT_EMAIL);}catch(err){console.error("VIP account lookup failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
       if(!rec){
         const hp=hashPassword(crypto.randomBytes(32).toString("hex"));
         rec={id:"vip-gio",email:VIP_ACCOUNT_EMAIL,username:"gio",salt:hp.salt,hash:hp.hash,createdAt:new Date().toISOString(),vip:true,canEdit:true,progress:{favorites:[],scenes:{},preferences:{rememberFavorites:true,stopOthers:false,keyboardHints:true},queue:[]}};
-        users[VIP_ACCOUNT_EMAIL]=rec;
-      } else {rec.vip=true;rec.canEdit=true;rec.username="gio";}
-      try{await saveJson(USERS_FILE,users);}catch(err){console.error("VIP account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
+        try{
+          const created=await insertNewUser(rec);
+          if(!created)rec=await findUserByEmail(VIP_ACCOUNT_EMAIL);
+        }catch(err){console.error("VIP account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
+      }
+      if(!rec)return send(res,503,{error:"storage_unavailable"});
+      rec.vip=true;rec.canEdit=true;rec.username="gio";
+      try{await persistUserRecord(rec);}catch(err){console.error("VIP account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
       const {sid}=createSession({id:rec.id,email:rec.email,username:rec.username,canEdit:true,vip:true});
       return send(res,200,{ok:true,canEdit:true,vip:true,user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:true,vip:true}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
     });

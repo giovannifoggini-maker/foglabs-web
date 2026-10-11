@@ -47,7 +47,7 @@ test('registration, email/password login, and VIP code validation', { timeout: 3
     const origin = `http://127.0.0.1:${port}`;
     child = spawn(process.execPath, [path.join(temporaryRoot, 'server.js')], {
       cwd: temporaryRoot,
-      env: { ...process.env, NODE_ENV: 'development', PORT: String(port), NO_BROWSER: '1', VIP_EMAIL_CODE: '' },
+      env: { ...process.env, NODE_ENV: 'development', PORT: String(port), NO_BROWSER: '1', VIP_EMAIL_CODE: 'test-only-vip-code' },
       stdio: 'ignore'
     });
     await waitForServer(origin, child);
@@ -59,6 +59,33 @@ test('registration, email/password login, and VIP code validation', { timeout: 3
     assert.equal(register.status, 201);
     const registrationCookie = cookieFrom(register);
 
+    // A second independent account must be creatable and usable in the same deployment.
+    const registerSecond = await fetch(`${origin}/api/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'second.user@example.com', username: 'SecondUser', password: 'second-user-pass-123', password2: 'second-user-pass-123' })
+    });
+    assert.equal(registerSecond.status, 201);
+    const secondCookie = cookieFrom(registerSecond);
+    const secondMe = await fetch(`${origin}/api/me`, { headers: { Cookie: secondCookie } }).then(response => response.json());
+    assert.equal(secondMe.authenticated, true);
+    assert.equal(secondMe.user.username, 'SecondUser');
+
+    const secondLogin = await fetch(`${origin}/api/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'second.user@example.com', password: 'second-user-pass-123' })
+    });
+    assert.equal(secondLogin.status, 200);
+    const secondLoginMe = await fetch(`${origin}/api/me`, { headers: { Cookie: cookieFrom(secondLogin) } }).then(response => response.json());
+    assert.equal(secondLoginMe.authenticated, true);
+    assert.equal(secondLoginMe.user.username, 'SecondUser');
+
+    const duplicate = await fetch(`${origin}/api/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'second.user@example.com', username: 'SecondUser', password: 'second-user-pass-123', password2: 'second-user-pass-123' })
+    });
+    assert.equal(duplicate.status, 409);
+    assert.equal((await duplicate.json()).error, 'account_exists');
+
     const login = await fetch(`${origin}/api/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'test.user@example.com', password: 'long-test-pass-123' })
@@ -69,6 +96,15 @@ test('registration, email/password login, and VIP code validation', { timeout: 3
     assert.equal(me.authenticated, true);
     assert.equal(me.user.username, 'TestUser');
 
+    const unifiedLogin = await fetch(`${origin}/api/account`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'test.user@example.com', password: 'long-test-pass-123' })
+    });
+    assert.equal(unifiedLogin.status, 200);
+    const unifiedMe = await fetch(`${origin}/api/me`, { headers: { Cookie: cookieFrom(unifiedLogin) } }).then(response => response.json());
+    assert.equal(unifiedMe.authenticated, true);
+    assert.equal(unifiedMe.user.username, 'TestUser');
+
     const wrongPassword = await fetch(`${origin}/api/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'test.user@example.com', password: 'not-the-password' })
@@ -78,7 +114,7 @@ test('registration, email/password login, and VIP code validation', { timeout: 3
 
     const vip = await fetch(`${origin}/api/vip/unlock`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: 'ciaosonomariowahuu' })
+      body: JSON.stringify({ code: 'test-only-vip-code' })
     });
     assert.equal(vip.status, 200);
     const vipCookie = cookieFrom(vip);

@@ -1,52 +1,13 @@
-# VYBEX / FogLabs — versione corretta per Cloudflare Pages + backend Node
+# FOGLABS / VYBEX — Accesso ospite (v1.6.0)
 
-Questa versione separa chiaramente **Accedi**, **Crea account** e **Sblocca VIP**. Il codice VIP ha un campo dedicato e viene verificato soltanto dal backend; email e password usano endpoint distinti.
+Questa variante rimuove dall'interfaccia il flusso email, password, creazione account e VIP. Si entra tramite **Continua senza email**.
 
-## Requisiti
+## Pubblicazione Cloudflare Pages
+- Repository root: cartella che contiene `public/`, `functions/` e `package.json`.
+- Build output directory: `public`
+- Build command: `exit 0` (solo se il progetto non richiede una build)
+- `functions/` deve restare nella root del progetto, non dentro `public/`.
 
-- Node.js 20 o superiore
-- Un servizio backend Node.js (ad esempio Render)
-- Un database PostgreSQL persistente in produzione
-- Cloudflare Pages collegato al repository Git, con Pages Functions abilitate
+Questa variante non elimina ancora gli endpoint account dal backend: sono semplicemente fuori dall'interfaccia e non vengono usati nel normale accesso ospite. Se vuoi ricreare in seguito l'autenticazione, sarà meglio riprogettarla separatamente.
 
-## Avvio locale
-
-1. Copia `.env.example` in `.env`.
-2. In `.env`, imposta `NODE_ENV=development` e `PORT=3100`. Il codice VIP richiesto è configurato nel backend come `ciaosonomariowahuu`.
-3. Esegui `npm install`, poi `npm start`.
-4. Apri `http://localhost:3100/vybex`.
-
-**Non caricare mai `.env` su GitHub.** `.gitignore` lo esclude già.
-
-## Pubblicazione su GitHub e Render
-
-1. Pubblica i file di questo progetto in un repository GitHub.
-2. Crea un Web Service Render usando `render.yaml`.
-3. Configura `DATABASE_URL` collegandolo al database PostgreSQL del servizio. Il codice VIP `ciaosonomariowahuu` è già impostato lato server e non richiede una variabile aggiuntiva su Render.
-4. Verifica `https://URL-DEL-BACKEND/health`: deve rispondere JSON con `ok: true` e `database: true`.
-
-Il codice VIP è impostato soltanto nel backend (`server.js`), non nel frontend. **Attenzione:** se il repository GitHub è pubblico, il codice può essere letto da chiunque apra il sorgente. Per un codice davvero privato, usa una variabile segreta su Render e mantieni privato il repository oppure rimuovi il valore predefinito prima di pubblicarlo. Dopo ogni modifica al backend, ridistribuisci/riavvia il servizio Render.
-
-## Pubblicazione su Cloudflare Pages
-
-1. Collega a Cloudflare Pages lo stesso repository GitHub.
-2. Imposta **Build command** su `npm run check` e **Build output directory** su `public`.
-3. Mantieni `functions/_middleware.js` nella cartella `functions/` alla radice del repository e `public/_redirects` dentro `public/`.
-4. In **Settings → Variables and Secrets**, imposta `BACKEND_URL` all'origine HTTPS del backend Render, ad esempio `https://nome-servizio.onrender.com`, senza slash o percorso finale. Configura la variabile per Production e per Preview se vuoi usare anche le anteprime.
-5. Avvia una nuova distribuzione e controlla `https://TUO-DOMINIO/health`.
-
-Il middleware inoltra `/api/*`, `/auth/*`, `/audio/*` e `/health` al backend; le pagine e gli altri asset statici restano su Cloudflare Pages. Il codice VIP è impostato nel backend (`server.js`); non aggiungerlo a Cloudflare Pages né al frontend.
-
-## Flussi di accesso
-
-- **Accedi:** email + password tramite `POST /api/login`.
-- **Crea account:** email + username + password + conferma tramite `POST /api/register`.
-- **Sblocca VIP:** codice nel campo dedicato, inviato a `POST /api/vip/unlock`.
-- **Diagnostica:** `GET /health` verifica backend e stato del database.
-
-Le password vengono memorizzate con derivazione crittografica lato server. Le sessioni correnti sono mantenute in memoria dal backend e vengono invalidate quando il processo si riavvia; per una distribuzione con requisiti più elevati, sposta anche le sessioni su uno store condiviso e persistente.
-
-## Controlli
-
-- `npm run check` controlla la sintassi degli script e del middleware.
-- `npm test` esegue test HTTP isolati per registrazione, login, password errata e codice VIP corretto/errato.
+Per le API server-side che rimangono attive, configura `BACKEND_URL` come secret/variable in Cloudflare Pages. Non inserire password o codici segreti nei file pubblici.
