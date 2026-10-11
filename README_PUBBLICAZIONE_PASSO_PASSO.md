@@ -15,7 +15,7 @@ Questa cartella contiene l'applicazione Node.js: FogLabs, VYBEX, AI Nametag Crea
 1. Apri https://render.com/ e accedi con GitHub.
 2. Nel dashboard scegli **New → Blueprint**.
 3. Collega `foglabs-web` e lascia che Render legga `render.yaml`.
-4. Il Blueprint crea un Web Service Node.js e un database PostgreSQL. Quando viene richiesto il segreto `VIP_EMAIL_CODE`, inserisci il codice che hai scelto per il VIP. Per mantenere il comportamento di test attuale puoi usare `ciaosonomariowahuu`; dato che chi lo conosce può entrare nel medesimo account condiviso `gio`, prima di aprire il sito a tutti è più sicuro sceglierne uno nuovo e non pubblicarlo.
+4. Il Blueprint crea un Web Service Node.js e un database PostgreSQL. Quando viene richiesto il segreto `VIP_EMAIL_CODE`, inserisci il codice che hai scelto per il VIP. Imposta `VIP_EMAIL_CODE` solo nelle variabili ambiente del backend. Il codice VIP abilita l’account condiviso `gio`, quindi non pubblicarlo nel repository o nei file frontend.
 5. Avvia il deploy e attendi lo stato **Live**.
 6. Verifica `https://NOME-SERVIZIO.onrender.com/health`. La home FogLabs si apre in `/` o `/foglabs`; gli altri percorsi sono `/vybex`, `/nametag`, `/randomizer` e `/minewiki`.
 

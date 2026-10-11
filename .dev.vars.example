@@ -1,0 +1,2 @@
+# Copy to .dev.vars to test Pages Functions locally with a local Node backend.
+BACKEND_URL=http://127.0.0.1:3100

@@ -1,12 +1,12 @@
 {
   "name": "foglabs",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "description": "FogLabs website and creative projects.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check public/app.js && node --check public/nametag.js && node --check public/randomizer.js"
+    "check": "node --check server.js && node --check public/app.js && node --check public/nametag.js && node --check public/randomizer.js && node --check --input-type=module < functions/_middleware.js"
   },
   "engines": {
     "node": ">=20"

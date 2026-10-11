@@ -31,4 +31,4 @@ Nota: sul piano gratuito con filesystem/processo effimero, il contatore può rip
 
 
 ## VIP senza pagamenti
-Inserendo `ciaosonomariowahuu` nel campo di accesso e premendo "Sblocca VIP" si attivano badge VIP, suono casuale, modalità FX e permessi di modifica/upload. È una funzione speciale gratuita, non un acquisto.
+Inserendo il codice configurato in `VIP_EMAIL_CODE` nel campo di accesso e premendo "Sblocca VIP" si attivano badge VIP, suono casuale, modalità FX e permessi di modifica/upload. Il codice resta soltanto nelle variabili ambiente del backend.

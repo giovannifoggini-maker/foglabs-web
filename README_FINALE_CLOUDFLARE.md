@@ -1,18 +1,14 @@
-# FOGLABS — pacchetto finale per Cloudflare Pages
+# VYBEX — configurazione finale Cloudflare Pages
 
-Questa cartella è pronta per pubblicare **il frontend statico** di FogLabs su Cloudflare Pages. Include le pagine, gli stili, gli script e i file multimediali presenti in `public/`, oltre alle regole di percorso.
+Questa versione include una Cloudflare Pages Function (`functions/_middleware.js`) che inoltra le API al backend Node.js configurato con `BACKEND_URL`.
 
-## Configurazione Cloudflare Pages
-- Repository GitHub: `foglabs-web`
-- Branch: `main`
-- Framework preset: `None`
-- Build command: lasciare vuoto
-- Build output directory: `public`
-- Variabili/segreti: non inserirli nel frontend.
+La distribuzione completa richiede:
 
-Dopo aver caricato i file nel repository: Cloudflare Dashboard → Workers & Pages → Create application → Pages → Connect to Git → scegli `foglabs-web` e `main` → configura i campi sopra → Save and Deploy.
+1. Repository GitHub con i contenuti di questa cartella nella root.
+2. Backend Node.js attivo con `server.js`, PostgreSQL e il segreto `VIP_EMAIL_CODE` configurato sul server.
+3. Progetto Cloudflare Pages collegato al repository, build command `exit 0`, output directory `public`.
+4. Variabile `BACKEND_URL` in Cloudflare Pages impostata all'URL HTTPS del backend.
 
-## Importante: cosa è e cosa non è pronto
-Questo pacchetto pubblica le pagine statiche. **Non equivale alla migrazione del backend Node.js**: login/account, VIP, chat pubbliche, voce e OAuth Discord non diventano automaticamente operativi su Cloudflare Pages. Queste API richiedono una migrazione e test separati su servizi Cloudflare compatibili. Non considerare funzionanti online le funzioni che dipendono dal server finché non sono state migrate e verificate.
+Segui `README_CLOUDFLARE.md` per i passaggi e `README_CORREZIONE_ACCESSO_VIP.md` per la diagnostica.
 
-Il sito usa il testo “sistema”/“progetti” evitando di descrivere tutto come “ecosistema”. Il file `public/_redirects` contiene gli alias di percorso statici.
+Nota: Cloudflare Pages serve il frontend ed esegue il proxy; non avvia da sola il server Node.js. Questa build usa l'email come identificativo, ma non include verifica email né recupero password.

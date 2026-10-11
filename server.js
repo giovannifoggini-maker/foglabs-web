@@ -198,19 +198,57 @@ const server=http.createServer(async (req,res)=>{
   if(u.pathname==="/api/progress"&&req.method==="POST"){const user=requireAuth(req,res);if(!user)return;return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});if(!saveUserProgress(user,b))return send(res,404,{error:"account_not_found"});return send(res,200,{ok:true})})}
   if(u.pathname==="/api/account"&&req.method==="POST") return parseBody(req,async(err,b)=>{
     if(err)return send(res,400,{error:"invalid_json"});
-    const email=String(b.email||"").trim().toLowerCase(),username=String(b.username||"").trim(),password=String(b.password||""),password2=String(b.password2||"");
+
+    const email=String(b.email||"").trim().toLowerCase();
+    const username=String(b.username||"").trim();
+    const password=String(b.password||"");
+    const password2=String(b.password2||"");
+
     if(!validEmail(email))return send(res,400,{error:"invalid_email"});
     if(email===VIP_ACCOUNT_EMAIL)return send(res,400,{error:"reserved_email"});
-    if(!validUsername(username))return send(res,400,{error:"invalid_username"});
-    if(password.length<8)return send(res,400,{error:"weak_password"});
-    if(password!==password2)return send(res,400,{error:"password_mismatch"});
-    const existing=users[email];
-    if(existing&&!verifyPassword(password,existing))return send(res,403,{error:"wrong_password"});
-    if(existing&&existing.username!==username)return send(res,409,{error:"username_mismatch"});
-    let rec=existing;
-    if(!rec){const hp=hashPassword(password);rec={id:"user-"+crypto.randomBytes(8).toString("hex"),email,username,salt:hp.salt,hash:hp.hash,createdAt:new Date().toISOString(),vip:false,canEdit:true,progress:{}};users[email]=rec;try{await saveJson(USERS_FILE,users)}catch(err){delete users[email];console.error("Account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"})}}
-    const sid=crypto.randomBytes(18).toString("hex");const session={id:rec.id,email:rec.email,username:rec.username,canEdit:true,vip:!!rec.vip};sessions.set(sid,session);visitorCount+=1;
-    return send(res,200,{ok:true,user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:true,vip:!!rec.vip}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)})
+
+    // Existing accounts sign in with email + password. Username and password confirmation
+    // are registration-only fields, so an existing user does not need to fill them again.
+    const wasExisting=Boolean(users[email]);
+    let rec=users[email];
+    if(rec){
+      if(!password || !verifyPassword(password,rec))return send(res,403,{error:"wrong_password"});
+    } else {
+      if(!validUsername(username))return send(res,400,{error:"invalid_username"});
+      if(password.length<8)return send(res,400,{error:"weak_password"});
+      if(password!==password2)return send(res,400,{error:"password_mismatch"});
+
+      const hp=hashPassword(password);
+      rec={
+        id:"user-"+crypto.randomBytes(8).toString("hex"),
+        email,
+        username,
+        salt:hp.salt,
+        hash:hp.hash,
+        createdAt:new Date().toISOString(),
+        vip:false,
+        canEdit:true,
+        progress:{}
+      };
+      users[email]=rec;
+      try{
+        await saveJson(USERS_FILE,users);
+      }catch(err){
+        delete users[email];
+        console.error("Account persist failed:",err.message);
+        return send(res,503,{error:"storage_unavailable"});
+      }
+    }
+
+    const sid=crypto.randomBytes(18).toString("hex");
+    const session={id:rec.id,email:rec.email,username:rec.username,canEdit:true,vip:!!rec.vip};
+    sessions.set(sid,session);
+    visitorCount+=1;
+    return send(res,200,{
+      ok:true,
+      created:!wasExisting,
+      user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:true,vip:!!rec.vip}
+    },"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
   });
   if(u.pathname==="/api/email"&&req.method==="POST"){return send(res,410,{error:"account_required"})}
   if(u.pathname==="/api/vip/unlock"&&req.method==="POST"){
