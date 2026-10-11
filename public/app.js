@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 const state={sounds:[],category:"ALL",lang:"it",visitorCount:0,canEdit:false,vip:false,filter:"",radio:false,radioIndex:0,audioA:null,audioB:null,activeAudios:[],delayedTimers:[],favorites:new Set(JSON.parse(localStorage.getItem("dsb_favorites")||"[]")),queue:[],loop:false,master:1,scenes:JSON.parse(localStorage.getItem("dsb_scenes")||"{}"),lastSound:null,timer:null,progressLoaded:false,progressTimer:null};
-const T={it:{title:"Accedi e prova VYBEX",text:"Puoi entrare senza email. Senza email puoi solo ascoltare.",emailLabel:"Email dell’account",emailBtn:"Accedi / continua",guestBtn:"Continua senza email",accountNote:"Account esistente: inserisci email e password. Nuovo account: dopo il primo tentativo, scegli username e conferma la password.",vipText:"Inserisci il codice VIP per sbloccare le funzioni extra.",vipBtn:"Sblocca VIP",upload:"+ Carica audio",edit:"Modalità modifica attiva: puoi caricare e modificare i brani.",listen:"Modalità sola ascolto: puoi riprodurre i brani, ma non modificarli o caricarne.",users:"utenti già entrati",invalid:"Inserisci un'email valida.",vipBad:"Codice VIP non valido.",random:"🎲 Suono casuale",fx:"⚡ Modalità FX"},en:{title:"Sign in and try VYBEX",text:"You can enter without email. Without email you can only listen.",emailLabel:"Account email",emailBtn:"Sign in / continue",guestBtn:"Continue without email",accountNote:"Existing account: enter email and password. New account: after the first attempt, choose a username and confirm your password.",vipText:"Enter the VIP code to unlock extra features.",vipBtn:"Unlock VIP",upload:"+ Upload audio",edit:"Editing mode enabled: you can upload and edit tracks.",listen:"Listen-only mode: you can play tracks but cannot edit or upload.",users:"users already entered",invalid:"Enter a valid email.",vipBad:"Invalid VIP code.",random:"🎲 Random sound",fx:"⚡ FX mode"}};
+const T={it:{title:"Accedi e prova VYBEX",text:"Entra con il tuo account, crea un account nuovo oppure continua come ospite.",emailLabel:"Email",emailBtn:"Accedi",passwordLabel:"Password",registerToggle:"Crea account",registerCancel:"Annulla registrazione",registerBtn:"Registrati",usernameLabel:"Username per il nuovo account",password2Label:"Conferma password",guestBtn:"Continua senza email",accountNote:"Scegli uno username e conferma la password per creare un account.",vipText:"Inserisci il codice VIP per sbloccare le funzioni extra.",vipCodeLabel:"Codice VIP",vipPlaceholder:"Inserisci il codice VIP",vipBtn:"Sblocca VIP",upload:"+ Carica audio",edit:"Modalità modifica attiva: puoi caricare e modificare i brani.",listen:"Modalità sola ascolto: puoi riprodurre i brani, ma non modificarli o caricarne.",users:"utenti già entrati",invalid:"Inserisci un indirizzo email valido.",passwordRequired:"Inserisci la password.",invalidCredentials:"Email o password non corrette.",accountExists:"Esiste già un account con questa email. Usa Accedi.",vipBad:"Codice VIP non valido.",vipEmpty:"Inserisci il codice VIP.",vipNotConfigured:"VIP non configurato: il gestore deve impostare VIP_EMAIL_CODE sul backend.",backendUnavailable:"Servizio non collegato: controlla BACKEND_URL su Cloudflare Pages.",tooManyAttempts:"Troppi tentativi. Attendi 15 minuti e riprova.",storageUnavailable:"Archivio account non disponibile. Riprova più tardi.",random:"🎲 Suono casuale",fx:"⚡ Modalità FX"},en:{title:"Sign in and try VYBEX",text:"Sign in, create a new account, or continue as a guest.",emailLabel:"Email",emailBtn:"Sign in",passwordLabel:"Password",registerToggle:"Create account",registerCancel:"Cancel registration",registerBtn:"Register",usernameLabel:"Username for the new account",password2Label:"Confirm password",guestBtn:"Continue as guest",accountNote:"Choose a username and confirm the password to create an account.",vipText:"Enter your VIP code to unlock extra features.",vipCodeLabel:"VIP code",vipPlaceholder:"Enter VIP code",vipBtn:"Unlock VIP",upload:"+ Upload audio",edit:"Editing mode enabled: you can upload and edit tracks.",listen:"Listen-only mode: you can play tracks but cannot edit or upload.",users:"users already entered",invalid:"Enter a valid email address.",passwordRequired:"Enter your password.",invalidCredentials:"Incorrect email or password.",accountExists:"An account already exists with this email. Please sign in.",vipBad:"Invalid VIP code.",vipEmpty:"Enter the VIP code.",vipNotConfigured:"VIP is not configured: the service owner must set VIP_EMAIL_CODE on the backend.",backendUnavailable:"Service unavailable: check BACKEND_URL in Cloudflare Pages.",tooManyAttempts:"Too many attempts. Wait 15 minutes and try again.",storageUnavailable:"Account storage is unavailable. Try again later.",random:"🎲 Random sound",fx:"⚡ FX mode"}};
 const tr=k=>(T[state.lang]||T.it)[k]||k;
 function toast(m){if(document.body.classList.contains('silent-mode'))return;$("toast").textContent=m;$("toast").classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>$("toast").classList.remove("show"),2300)}
 async function api(u,o={}){let r;try{r=await fetch(u,o)}catch(_){throw new Error("backend_unavailable")}const ct=r.headers.get("content-type")||"";let d={};if(ct.includes("application/json")){d=await r.json().catch(()=>({}))}else{const body=await r.text().catch(()=>"");if(!r.ok||body.trim().startsWith("<!DOCTYPE")||body.trim().startsWith("<html"))throw new Error("backend_unavailable")}if(!r.ok)throw new Error(d.error||"request_failed");return d}
@@ -14,8 +14,11 @@ function applyLang(){
   const previewCopy=state.lang==='it'?previewIt:previewEn;
   Object.entries(previewCopy).forEach(([id,value])=>{const node=$(id);if(node)node.textContent=value;});
   $("loginTitle").textContent=tr("title");$("loginText").textContent=tr("text");$("emailLabel").textContent=tr("emailLabel");
-  $("emailBtn").textContent=tr("emailBtn");$("guestBtn").textContent=tr("guestBtn");
-  $("accountNote").textContent=tr("accountNote");$("vipText").textContent=tr("vipText");$("vipBtn").textContent=tr("vipBtn");
+  $("passwordLabel").textContent=tr("passwordLabel");$("emailBtn").textContent=tr("emailBtn");
+  $("registerToggleBtn").textContent=$("accountFields").hidden?tr("registerToggle"):tr("registerCancel");
+  $("registerBtn").textContent=tr("registerBtn");$("usernameLabel").textContent=tr("usernameLabel");$("password2Label").textContent=tr("password2Label");
+  $("guestBtn").textContent=tr("guestBtn");$("accountNote").textContent=tr("accountNote");$("vipText").textContent=tr("vipText");
+  $("vipCodeLabel").textContent=tr("vipCodeLabel");$("vipCodeInput").placeholder=tr("vipPlaceholder");$("vipBtn").textContent=tr("vipBtn");
   $("uploadText").textContent=tr("upload");$("usersLabel").textContent=tr("users");$("langBtn").textContent=state.lang==="it"?"EN":"IT";
   const fogText=state.lang==='it'?{about:'Su di noi',models:'Altri modelli',soon:'In arrivo',navModels:'Progetti',close:'Chiudi finestra',badge:'IL LABORATORIO CREATIVO',title:'Dietro VYBEX c’è FogLabs.',aboutText:'FogLabs è il laboratorio creativo dietro VYBEX: un posto dove sperimentare idee digitali, costruire strumenti e trasformare progetti in esperienze da usare e condividere.',ideas:'Idee in movimento',ideasText:'Nuove funzioni, esperimenti e progetti.',tech:'Creatività e tecnologia',techText:'Strumenti pensati per creare e connettersi.',explore:'Scopri gli altri modelli →',modelsBadge:'ECOSISTEMA FOGLABS',modelsTitle:'Modelli FogLabs',modelsText:'Apri i progetti già disponibili. Qui appariranno anche i prossimi strumenti FogLabs man mano che saranno pronti.',randomizerTitle:'FogLabs Randomizer',randomizerSubtitle:'Disponibile · Codici casuali',current:'Disponibile · Audio e community',next:'Nuovo modello',future:'Altro progetto',announce:'Da annunciare',back:'← Su di noi',footer:'FogLabs · Progetti in evoluzione'}:{about:'About us',models:'Other models',soon:'Coming soon',navModels:'Projects',close:'Close window',badge:'THE CREATIVE LAB',title:'Behind VYBEX is FogLabs.',aboutText:'FogLabs is the creative lab behind VYBEX: a place to experiment with digital ideas, build tools, and turn projects into experiences people can use and share.',ideas:'Ideas in motion',ideasText:'New features, experiments, and projects.',tech:'Creativity and technology',techText:'Tools designed for creating and connecting.',explore:'Explore other models →',modelsBadge:'THE FOGLABS ECOSYSTEM',modelsTitle:'FogLabs models',modelsText:'Open the projects that are already available. Future FogLabs tools will appear here as they are ready.',randomizerTitle:'FogLabs Randomizer',randomizerSubtitle:'Available · Random codes',current:'Available · Audio and community',next:'New model',future:'Another project',announce:'To be announced',back:'← About us',footer:'FogLabs · Projects in progress'};
   const fogIds={aboutFogLabsLabel:'about',otherModelsLabel:'models',modelsSoonLabel:'navModels',fogModalTitle:'title',fogAboutBadge:'badge',fogAboutText:'aboutText',fogExploreModelsBtn:'explore',fogModelsBadge:'modelsBadge',fogModelsTitle:'modelsTitle',fogModelsText:'modelsText',fogCurrentModelLabel:'current',fogRandomizerTitle:'randomizerTitle',fogRandomizerSubtitle:'randomizerSubtitle',fogNextModelTitle:'next',fogComingSoon1:'soon',fogFutureModelTitle:'future',fogComingSoon2:'announce',fogBackAboutBtn:'back',fogLabsFooter:'footer'};
@@ -50,36 +53,55 @@ async function deleteEditingSound(){if(!editingSound)return;if(!editingSound.own
 async function duplicateEditor(){if(!editingSound)return;try{const r=await api('/api/sounds/duplicate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:editingSound.id})});state.sounds.push(r.sound);renderTabs();renderGrid();fillDecks();toast('📋 Suono duplicato')}catch{toast('Duplicazione non riuscita')}}
 function normalizeCombo(e){const p=[];if(e.ctrlKey)p.push('CTRL');if(e.altKey)p.push('ALT');if(e.shiftKey)p.push('SHIFT');if(e.metaKey)p.push('META');let k=e.key.toUpperCase();if(['CONTROL','SHIFT','ALT','META'].includes(k))return '';if(k===' ')k='SPACE';p.push(k);return p.join('+')}
 function showBoard(me){state.visitorCount=me.visitorCount??0;state.canEdit=!!me.user?.canEdit;state.vip=!!me.user?.vip;const previewView=$("previewView");if(previewView)previewView.hidden=true;const loginView=$("loginView");loginView.hidden=true;loginView.setAttribute('aria-hidden','true');loginView.classList.add('completed');document.body.classList.add('authenticated');$("boardView").hidden=false;$("logoutBtn").hidden=false;$("welcome").textContent=`Ciao, ${me.user?.username||'User'}!`;$("modeStatus").textContent=state.canEdit?' • MODIFICA':' • SOLO ASCOLTO';applyLang();fillDecks()}
+function showLoginError(message){$("loginError").textContent=message;}
 async function emailLogin(){
- const email=$("emailInput").value.trim();
+ const email=$("emailInput").value.trim().toLowerCase();
  const password=$("passwordInput").value;
- const error=$("loginError");
- error.textContent='';
- if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(email)){error.textContent=tr('invalid');$("emailInput").focus();return;}
- if(!password){error.textContent=state.lang==='it'?'Inserisci la password.':'Enter your password.';$("passwordInput").focus();return;}
- const registrationVisible=!$("registrationFields").hidden;
- const username=$("usernameInput").value.trim();
- const password2=$("password2Input").value;
- const payload={email,password};
- if(registrationVisible){payload.username=username;payload.password2=password2;}
+ if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(email)){showLoginError(tr("invalid"));return;}
+ if(!password){showLoginError(tr("passwordRequired"));return;}
+ showLoginError("");
  try{
-   await api('/api/account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-   $('loginView').hidden=true;$('loginView').setAttribute('aria-hidden','true');$('loginView').classList.add('completed');document.body.classList.add('authenticated');$('boardView').hidden=false;$('logoutBtn').hidden=false;
-   $('emailInput').value='';$('usernameInput').value='';$('passwordInput').value='';$('password2Input').value='';$('registrationFields').hidden=true;error.textContent='';
-   const me=await api('/api/me');showBoard(me);toast('Accesso completato. Benvenuto in VYBEX!');
+  await api('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+  location.assign('/vybex');
  }catch(e){
-   const m={invalid_email:'Inserisci un indirizzo email valido.',invalid_username:'Nuovo account: scegli uno username di 3-24 caratteri (lettere, numeri, punto, trattino o underscore).',weak_password:'La password deve avere almeno 8 caratteri.',password_mismatch:'Le password non coincidono.',wrong_password:'Password non corretta per questa email.',reserved_email:'Questo indirizzo è riservato al servizio.',too_many_attempts:'Troppi tentativi. Attendi 15 minuti e riprova.',storage_unavailable:'Archivio account non disponibile. Riprova più tardi.',backend_unavailable:'Servizio account non collegato: controlla BACKEND_URL su Cloudflare Pages.'};
-   if(e.message==='invalid_username'&&!registrationVisible){$('registrationFields').hidden=false;$('usernameInput').focus();error.textContent=state.lang==='it'?'Nuovo account: completa username e conferma password, poi premi di nuovo Accedi / continua.':'New account: fill in username and password confirmation, then select Sign in / continue again.';return;}
-   error.textContent=m[e.message]||(state.lang==='it'?'Accesso non riuscito. Controlla email e password.':'Sign-in failed. Check your email and password.');
+  const m={invalid_credentials:tr('invalidCredentials'),invalid_email:tr('invalid'),too_many_attempts:tr('tooManyAttempts'),storage_unavailable:tr('storageUnavailable'),backend_unavailable:tr('backendUnavailable')};
+  showLoginError(m[e.message]||'Accesso non riuscito. Riprova.');
  }
 }
-async function guestLogin(){try{const r=await fetch('/auth/guest',{cache:'no-store'});if(!r.ok)throw new Error('backend_unavailable');location.assign('/vybex')}catch(e){$("loginError").textContent=e.message==='backend_unavailable'?'Servizio di accesso non collegato: controlla BACKEND_URL su Cloudflare Pages.':'Accesso ospite non riuscito.'}}
+function toggleRegistration(){
+ const fields=$("accountFields");
+ fields.hidden=!fields.hidden;
+ $("registerToggleBtn").textContent=fields.hidden?tr("registerToggle"):tr("registerCancel");
+ showLoginError("");
+ if(!fields.hidden)$("usernameInput").focus();
+}
+async function registerAccount(){
+ const email=$("emailInput").value.trim().toLowerCase();
+ const username=$("usernameInput").value.trim();
+ const password=$("passwordInput").value;
+ const password2=$("password2Input").value;
+ if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(email)){showLoginError(tr("invalid"));return;}
+ showLoginError("");
+ try{
+  await api('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,username,password,password2})});
+  location.assign('/vybex');
+ }catch(e){
+  const m={invalid_email:tr('invalid'),invalid_username:'Lo username deve contenere 3–24 caratteri: lettere, numeri, punto, trattino o underscore.',weak_password:'La password deve contenere almeno 8 caratteri.',password_mismatch:'Le password non coincidono.',account_exists:tr('accountExists'),reserved_email:'Questo indirizzo email è riservato.',too_many_attempts:tr('tooManyAttempts'),storage_unavailable:tr('storageUnavailable'),backend_unavailable:tr('backendUnavailable')};
+  showLoginError(m[e.message]||'Registrazione non riuscita. Controlla i dati e riprova.');
+ }
+}
+async function guestLogin(){try{const r=await fetch('/auth/guest',{cache:'no-store'});if(!r.ok)throw new Error('backend_unavailable');location.assign('/vybex')}catch(e){showLoginError(tr('backendUnavailable'));}}
 async function vipLogin(){
  const code=$("vipCodeInput").value.trim();
- const error=$("loginError");error.textContent='';
- if(!code){error.textContent=state.lang==='it'?'Inserisci il codice VIP.':'Enter the VIP code.';$("vipCodeInput").focus();return;}
- try{const r=await api('/api/vip/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});if(r.vip)location.assign('/vybex');else throw new Error('invalid_code');}
- catch(e){const m={vip_not_configured:'VIP non configurato: imposta VIP_EMAIL_CODE nei segreti del backend.',backend_unavailable:'Servizio VIP non collegato: controlla BACKEND_URL su Cloudflare Pages.',too_many_attempts:'Troppi tentativi VIP. Attendi 15 minuti e riprova.',storage_unavailable:'Archivio account non disponibile. Riprova più tardi.',invalid_code:tr('vipBad')};error.textContent=m[e.message]||(state.lang==='it'?'Sblocco VIP non riuscito. Riprova.':'VIP unlock failed. Try again.');}
+ if(!code){showLoginError(tr('vipEmpty'));return;}
+ showLoginError("");
+ try{
+  await api('/api/vip/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});
+  location.assign('/vybex');
+ }catch(e){
+  const m={vip_not_configured:tr('vipNotConfigured'),backend_unavailable:tr('backendUnavailable'),too_many_attempts:tr('tooManyAttempts'),storage_unavailable:tr('storageUnavailable'),invalid_code:tr('vipBad')};
+  showLoginError(m[e.message]||'Accesso VIP non riuscito. Riprova.');
+ }
 }
 function fillDecks(){for(const id of ['deckA','deckB'])$(id).innerHTML=state.sounds.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');}
 function selected(id){return state.sounds.find(s=>s.id===$(id).value)}
@@ -147,7 +169,7 @@ function init(){
  function openFogModal(which='about'){if(!fogModal)return;fogAbout.hidden=which!=='about';fogModels.hidden=which!=='models';fogModal.setAttribute('aria-labelledby',which==='about'?'fogModalTitle':'fogModelsTitle');fogModal.hidden=false;fogModal.setAttribute('aria-hidden','false');document.body.classList.add('fog-modal-open');$('closeFogModalBtn')?.focus();}
  function closeFogModal(){if(!fogModal)return;fogModal.hidden=true;fogModal.setAttribute('aria-hidden','true');document.body.classList.remove('fog-modal-open');}
  $('otherModelsBtn')?.addEventListener('click',()=>openFogModal('models'));$('fogExploreModelsBtn')?.addEventListener('click',()=>openFogModal('models'));$('fogBackAboutBtn')?.addEventListener('click',()=>openFogModal('about'));$('closeFogModalBtn')?.addEventListener('click',closeFogModal);document.querySelector('[data-close-fog-modal]')?.addEventListener('click',closeFogModal);document.addEventListener('keydown',e=>{if(e.key==='Escape'&&fogModal&&!fogModal.hidden)closeFogModal()});
- $("langBtn").onclick=()=>{state.lang=state.lang==='it'?'en':'it';applyLang()};$("emailBtn").onclick=emailLogin;$("guestBtn").onclick=guestLogin;$("vipBtn").onclick=vipLogin;$("emailInput").onkeydown=e=>{if(e.key==='Enter')emailLogin()};$("passwordInput").onkeydown=e=>{if(e.key==='Enter')emailLogin()};$("password2Input").onkeydown=e=>{if(e.key==='Enter')emailLogin()};$("vipCodeInput").onkeydown=e=>{if(e.key==='Enter')vipLogin()};$("logoutBtn").onclick=async()=>{await api('/auth/logout',{method:'POST'});location.reload()};
+ $("langBtn").onclick=()=>{state.lang=state.lang==='it'?'en':'it';applyLang()};$("emailBtn").onclick=emailLogin;$("registerToggleBtn").onclick=toggleRegistration;$("registerBtn").onclick=registerAccount;$("guestBtn").onclick=guestLogin;$("vipBtn").onclick=vipLogin;$("emailInput").onkeydown=e=>{if(e.key==='Enter')emailLogin()};$("passwordInput").onkeydown=e=>{if(e.key==='Enter')emailLogin()};$("password2Input").onkeydown=e=>{if(e.key==='Enter')registerAccount()};$("vipCodeInput").onkeydown=e=>{if(e.key==='Enter')vipLogin()};$("logoutBtn").onclick=async()=>{await api('/auth/logout',{method:'POST'});location.reload()};
  $("fileInput").onchange=async e=>{if(!state.canEdit){e.target.value='';return toast('Inserisci una email per caricare.')}const f=e.target.files[0];if(!f)return;const fd=new FormData();fd.append('file',f);try{const r=await api('/api/sounds/upload',{method:'POST',body:fd});state.sounds.push(r.sound);state.category='ALL';renderTabs();renderGrid();fillDecks();toast('Audio caricato.')}catch(err){toast(err.message==='unsupported_format'?'Formato non supportato.':'Upload non riuscito.')}finally{e.target.value=''}};
  $("searchInput").oninput=e=>{state.filter=e.target.value.trim().toLowerCase();renderGrid()};
  $("vipShuffleBtn").onclick=()=>state.sounds.length&&playSound(state.sounds[Math.floor(Math.random()*state.sounds.length)]);$("vipFxBtn").onclick=()=>{document.body.classList.toggle('fx-mode');toast(document.body.classList.contains('fx-mode')?'⚡ FX ON':'⚡ FX OFF')};

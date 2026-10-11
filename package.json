@@ -1,12 +1,13 @@
 {
   "name": "foglabs",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": true,
-  "description": "FogLabs website and creative projects.",
+  "description": "FogLabs and VYBEX web app with distinct login, registration, and server-verified VIP access.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check public/app.js && node --check public/nametag.js && node --check public/randomizer.js && node --check --input-type=module < functions/_middleware.js"
+    "check": "node --check server.js && node --check public/app.js && node --check public/nametag.js && node --check public/randomizer.js && node --check --input-type=module < functions/_middleware.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"

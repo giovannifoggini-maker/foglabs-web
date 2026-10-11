@@ -58,7 +58,34 @@
     <p id="previewDisclaimer" class="preview-disclaimer">Alcune funzioni richiedono un account o una configurazione del server per funzionare tra utenti diversi.</p>
   </section>
 </section>
-<section id="loginView" class="login" hidden><div class="hero"><button id="backToPreviewBtn" class="ghost back-preview" type="button">← Torna all’anteprima</button><div class="pill">FOGLABS · VYBEX</div><div class="counter"><span id="visitorCount">0</span> <span id="usersLabel">utenti già entrati</span></div><h1 id="loginTitle">Accedi e prova VYBEX</h1><p id="loginText">Puoi entrare senza email. Senza email puoi solo ascoltare.</p><div class="email-gate"><label id="emailLabel" for="emailInput">Email dell’account</label><input id="emailInput" type="email" autocomplete="email" placeholder="nome@esempio.it"><div id="accountFields" class="account-fields"><label for="passwordInput">Password</label><input id="passwordInput" type="password" autocomplete="current-password" placeholder="La tua password"><div id="registrationFields" hidden><label for="usernameInput">Username (solo per nuovo account)</label><input id="usernameInput" type="text" autocomplete="username" placeholder="Scegli uno username"><label for="password2Input">Conferma password</label><input id="password2Input" type="password" autocomplete="new-password" placeholder="Ripeti la password"></div><small id="accountNote">Account esistente: inserisci email e password. Nuovo account: dopo il primo tentativo, scegli username e conferma la password.</small></div><div class="email-actions"><button id="emailBtn" class="primary" type="button">Accedi / continua</button><button id="guestBtn" class="ghost" type="button">Continua senza email</button></div><div class="vip-box"><b>✨ VIP</b><p id="vipText">Inserisci il codice VIP per sbloccare le funzioni extra.</p><label for="vipCodeInput">Codice VIP</label><input id="vipCodeInput" type="password" autocomplete="off" placeholder="Inserisci il codice VIP"><button id="vipBtn" class="secondary" type="button">Sblocca VIP</button></div><div id="loginError" class="error" role="status" aria-live="polite"></div><small id="emailNote">Le funzioni disponibili dipendono dalla configurazione del servizio.</small></div></div></section>
+<section id="loginView" class="login" hidden><div class="hero"><button id="backToPreviewBtn" class="ghost back-preview" type="button">← Torna all’anteprima</button><div class="pill">FOGLABS · VYBEX</div><div class="counter"><span id="visitorCount">0</span> <span id="usersLabel">utenti già entrati</span></div><h1 id="loginTitle">Accedi e prova VYBEX</h1><p id="loginText">Puoi entrare senza email. Senza email puoi solo ascoltare.</p><div class="email-gate">
+<label id="emailLabel" for="emailInput">Email</label>
+<input id="emailInput" type="email" autocomplete="email" placeholder="nome@esempio.it">
+<label id="passwordLabel" for="passwordInput" style="margin-top:12px">Password</label>
+<input id="passwordInput" type="password" autocomplete="current-password" placeholder="La tua password">
+<div class="email-actions">
+<button id="emailBtn" class="primary" type="button">Accedi</button>
+<button id="registerToggleBtn" class="secondary" type="button">Crea account</button>
+<button id="guestBtn" class="ghost" type="button">Continua senza email</button>
+</div>
+<div id="accountFields" class="account-fields" hidden>
+<label id="usernameLabel" for="usernameInput">Username per il nuovo account</label>
+<input id="usernameInput" type="text" autocomplete="username" placeholder="3–24 caratteri">
+<label id="password2Label" for="password2Input">Conferma password</label>
+<input id="password2Input" type="password" autocomplete="new-password" placeholder="Ripeti la password">
+<small id="accountNote">Per creare un account, scegli uno username e conferma la password.</small>
+<button id="registerBtn" class="primary" type="button">Registrati</button>
+</div>
+<div class="vip-box">
+<b>✨ VIP</b>
+<p id="vipText">Inserisci il codice VIP per sbloccare le funzioni extra.</p>
+<label id="vipCodeLabel" for="vipCodeInput">Codice VIP</label>
+<input id="vipCodeInput" type="password" autocomplete="off" placeholder="Inserisci il codice VIP">
+<button id="vipBtn" class="secondary" type="button">Sblocca VIP</button>
+</div>
+<div id="loginError" class="error" role="alert" aria-live="polite"></div>
+<small id="emailNote">L'accesso VIP richiede che il servizio sia configurato correttamente.</small>
+</div></div></section>
 <section id="boardView" hidden><div class="statusbar"><div><b id="welcome">Ciao!</b><span id="modeStatus"></span><span id="vipBadge" class="vip-badge" hidden>✨ VIP</span></div><div class="status-actions"><span class="offline-ai-badge">🧠 Mini IA offline</span></div></div>
 <div id="vipTools" class="vip-tools" hidden><strong>✨ VIP attivo</strong><button id="vipShuffleBtn" class="secondary">🎲 Suono casuale</button><button id="vipFxBtn" class="secondary">⚡ Modalità FX</button></div>
 <nav class="main-tabs"><button data-panel="soundboard" class="main-tab active">🎵 Soundboard</button><button data-panel="dj" class="main-tab">🎧 DJ</button><button data-panel="radio" class="main-tab">📻 Radio</button><button data-panel="calls" class="main-tab">📞 Chiamate Wi-Fi</button><button data-panel="chats" class="main-tab">💬 Chat pubbliche</button><button data-panel="mini-ai" class="main-tab">🧠 Mini IA</button><button data-panel="studio" class="main-tab">🎛️ Studio</button><button data-panel="features" class="main-tab">🧰 100 Funzioni</button><button data-panel="emoji-maker" class="main-tab">🎨 Emoji Maker</button></nav>

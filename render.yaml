@@ -1,4 +1,4 @@
-# Render Blueprint for a free public beta. Free Postgres expires after 30 days; see README_DEPLOY.md.
+# Render Blueprint for the Node backend and PostgreSQL database. Review database retention/pricing in your Render dashboard.
 services:
   - type: web
     name: foglabs-web

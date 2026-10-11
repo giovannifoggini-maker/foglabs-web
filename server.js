@@ -16,9 +16,7 @@ const AUTO_SELECT_PORT = !process.env.PORT;
 let ACTIVE_PORT = PORT;
 let dbPool = null;
 let dbWriteQueue = Promise.resolve();
-// Keep the VIP code server-side. VIP_EMAIL_CODE is the documented variable;
-// VYBEX_VIP_CODE is accepted as a compatibility alias for existing deployments.
-const VIP_EMAIL_CODE = String(process.env.VIP_EMAIL_CODE || process.env.VYBEX_VIP_CODE || "").trim();
+const VIP_EMAIL_CODE = String(process.env.VIP_EMAIL_CODE || "").trim();
 const VIP_ACCOUNT_EMAIL = "vip@local.soundboard";
 const rateBuckets = new Map();
 const ROOT = __dirname;
@@ -184,9 +182,10 @@ const server=http.createServer(async (req,res)=>{
     if(dbPool){try{await dbPool.query("SELECT 1");}catch{return send(res,503,{ok:false,database:false});}}
     return send(res,200,{ok:true,database:!!dbPool,environment:process.env.NODE_ENV==="production"?"production":"development"});
   }
-  if(req.method==="POST" && (u.pathname==="/api/account" || u.pathname==="/api/vip/unlock")){
-    const key=u.pathname==="/api/account"?"account":"vip";
-    if(!consumeRateLimit(req,key,key==="vip"?8:20))return send(res,429,{error:"too_many_attempts"},"application/json; charset=utf-8", {"Retry-After":"900"});
+  if(req.method==="POST" && ["/api/account","/api/login","/api/register","/api/vip/unlock"].includes(u.pathname)){
+    const key=u.pathname==="/api/vip/unlock"?"vip":u.pathname==="/api/login"?"login":u.pathname==="/api/register"?"register":"account";
+    const limit=key==="vip"?8:key==="login"?12:20;
+    if(!consumeRateLimit(req,key,limit))return send(res,429,{error:"too_many_attempts"},"application/json; charset=utf-8", {"Retry-After":"900"});
   }
   // Guest entry creates a read-only session. The old test alias is development-only.
   if(u.pathname==="/auth/guest"&&req.method==="GET"){const {sid}=createSession({id:"guest-"+crypto.randomBytes(8).toString("hex"),username:"Ospite",email:null,canEdit:false,vip:false});return send(res,302,"","text/plain; charset=utf-8",{"Location":"/","Set-Cookie":cookie(sid)})}
@@ -198,6 +197,40 @@ const server=http.createServer(async (req,res)=>{
   if(u.pathname==="/api/me"&&req.method==="GET"){const user=sessionUser(req);return send(res,200,{authenticated:!!user,user:user?{id:user.id,username:user.username,emailProvided:!!user.email,canEdit:!!user.canEdit,vip:!!user.vip}:null,mode:process.env.NODE_ENV === "production" ? "PRODUCTION" : "DEVELOPMENT",visitorCount})}
   if(u.pathname==="/api/progress"&&req.method==="GET"){const user=requireAuth(req,res);if(!user)return;const rec=userRecord(user);return send(res,200,{progress:rec?.progress||{favorites:[],scenes:{},preferences:{rememberFavorites:true,stopOthers:false,keyboardHints:true},queue:[]}})}
   if(u.pathname==="/api/progress"&&req.method==="POST"){const user=requireAuth(req,res);if(!user)return;return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});if(!saveUserProgress(user,b))return send(res,404,{error:"account_not_found"});return send(res,200,{ok:true})})}
+  if(u.pathname==="/api/login"&&req.method==="POST") return parseBody(req,async(err,b)=>{
+    if(err)return send(res,400,{error:"invalid_json"});
+    const email=String(b.email||"").trim().toLowerCase();
+    const password=String(b.password||"");
+    if(!validEmail(email))return send(res,400,{error:"invalid_email"});
+    const rec=users[email];
+    if(!rec || !password || !verifyPassword(password,rec))return send(res,403,{error:"invalid_credentials"});
+    const sid=crypto.randomBytes(18).toString("hex");
+    const session={id:rec.id,email:rec.email,username:rec.username,canEdit:!!rec.canEdit,vip:!!rec.vip};
+    sessions.set(sid,session);
+    visitorCount+=1;
+    return send(res,200,{ok:true,created:false,user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:!!rec.canEdit,vip:!!rec.vip}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
+  });
+  if(u.pathname==="/api/register"&&req.method==="POST") return parseBody(req,async(err,b)=>{
+    if(err)return send(res,400,{error:"invalid_json"});
+    const email=String(b.email||"").trim().toLowerCase();
+    const username=String(b.username||"").trim();
+    const password=String(b.password||"");
+    const password2=String(b.password2||"");
+    if(!validEmail(email))return send(res,400,{error:"invalid_email"});
+    if(email===VIP_ACCOUNT_EMAIL)return send(res,400,{error:"reserved_email"});
+    if(users[email])return send(res,409,{error:"account_exists"});
+    if(!validUsername(username))return send(res,400,{error:"invalid_username"});
+    if(password.length<8)return send(res,400,{error:"weak_password"});
+    if(password!==password2)return send(res,400,{error:"password_mismatch"});
+    const hp=hashPassword(password);
+    const rec={id:"user-"+crypto.randomBytes(8).toString("hex"),email,username,salt:hp.salt,hash:hp.hash,createdAt:new Date().toISOString(),vip:false,canEdit:true,progress:{favorites:[],scenes:{},preferences:{rememberFavorites:true,stopOthers:false,keyboardHints:true},queue:[]}};
+    users[email]=rec;
+    try{await saveJson(USERS_FILE,users);}catch(err){delete users[email];console.error("Account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
+    const sid=crypto.randomBytes(18).toString("hex");
+    sessions.set(sid,{id:rec.id,email:rec.email,username:rec.username,canEdit:true,vip:false});
+    visitorCount+=1;
+    return send(res,201,{ok:true,created:true,user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:true,vip:false}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
+  });
   if(u.pathname==="/api/account"&&req.method==="POST") return parseBody(req,async(err,b)=>{
     if(err)return send(res,400,{error:"invalid_json"});
 
@@ -257,7 +290,7 @@ const server=http.createServer(async (req,res)=>{
     return parseBody(req,async(err,b)=>{
       if(err)return send(res,400,{error:"invalid_json"});
       if(!VIP_EMAIL_CODE)return send(res,503,{error:"vip_not_configured"});
-      const code=String(b.email||b.code||"").trim();
+      const code=String(b.code||b.email||"").trim();
       const provided=Buffer.from(code,"utf8"),expected=Buffer.from(VIP_EMAIL_CODE,"utf8");
       if(provided.length!==expected.length || !crypto.timingSafeEqual(provided,expected))return send(res,403,{error:"invalid_code"});
       let rec=users[VIP_ACCOUNT_EMAIL];

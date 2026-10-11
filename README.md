@@ -1,58 +1,52 @@
-# VYBEX — FogLabs
+# VYBEX / FogLabs — versione corretta per Cloudflare Pages + backend Node
 
-Sorgente del sito FogLabs/VYBEX. Stack: Node.js 20+, Pages Functions su Cloudflare Pages e backend Node.js su Render.
+Questa versione separa chiaramente **Accedi**, **Crea account** e **Sblocca VIP**. Il codice VIP ha un campo dedicato e viene verificato soltanto dal backend; email e password usano endpoint distinti.
 
-## Correzioni incluse
+## Requisiti
 
-- Accesso account in un solo passaggio con email e password.
-- Registrazione di un nuovo account guidata: username e conferma password vengono richiesti solo se l'email non è già registrata.
-- Campo VIP separato dall'email; il browser invia il codice all'endpoint `/api/vip/unlock`.
-- Verifica VIP esclusivamente sul backend, con confronto a tempo costante.
-- Proxy Cloudflare Pages verso il backend tramite `functions/_middleware.js`.
-- I file di documentazione duplicati sono stati rimossi; questa è la guida principale.
+- Node.js 20 o superiore
+- Un servizio backend Node.js (ad esempio Render)
+- Un database PostgreSQL persistente in produzione
+- Cloudflare Pages collegato al repository Git, con Pages Functions abilitate
 
 ## Avvio locale
 
-1. Installa Node.js 20 o successivo.
-2. Copia `.env.example` in `.env` e imposta `VIP_EMAIL_CODE` al codice VIP che vuoi usare. Per il codice che hai scelto, inserisci il valore soltanto nel file `.env` locale. Non caricare mai `.env` su GitHub.
-3. Esegui `npm install` e poi `npm start`.
-4. Apri l'URL mostrato nel terminale e visita `/vybex`.
-5. Verifica la sintassi con `npm run check`.
+1. Copia `.env.example` in `.env`.
+2. In `.env`, imposta `NODE_ENV=development`, `PORT=3100` e `VIP_EMAIL_CODE` con un codice di prova scelto da te.
+3. Esegui `npm install`, poi `npm start`.
+4. Apri `http://localhost:3100/vybex`.
 
-## Pubblicazione corretta: prima backend, poi frontend
+**Non caricare mai `.env` su GitHub.** `.gitignore` lo esclude già.
 
-### 1. GitHub
+## Pubblicazione su GitHub e Render
 
-Carica la cartella `FOGLABS` nel repository. Il file `.gitignore` esclude `.env`, `.dev.vars` e i dati locali degli account. Non inserire credenziali o database esportati nel repository.
+1. Pubblica i file di questo progetto in un repository GitHub.
+2. Crea un Web Service Render usando `render.yaml`.
+3. Nelle variabili ambiente del servizio Render configura `VIP_EMAIL_CODE` con il codice VIP scelto. Configura `DATABASE_URL` collegandolo al database PostgreSQL del servizio.
+4. Verifica `https://URL-DEL-BACKEND/health`: deve rispondere JSON con `ok: true` e `database: true`.
 
-### 2. Backend su Render
+Il codice VIP non è scritto in `public/app.js`, `server.js`, nei README o nei file di esempio: resta un segreto del backend. Se cambi il codice, modifica la variabile su Render e ridistribuisci/riavvia il servizio.
 
-Usa il `render.yaml` incluso per creare il servizio Node. In Render apri **foglabs-web → Environment** e imposta o aggiorna questa variabile con il valore esatto richiesto:
+## Pubblicazione su Cloudflare Pages
 
-- `VIP_EMAIL_CODE` = il codice scelto, inserito esattamente senza spazi iniziali o finali
+1. Collega a Cloudflare Pages lo stesso repository GitHub.
+2. Imposta **Build command** su `npm run check` e **Build output directory** su `public`.
+3. Mantieni `functions/_middleware.js` nella cartella `functions/` alla radice del repository e `public/_redirects` dentro `public/`.
+4. In **Settings → Variables and Secrets**, imposta `BACKEND_URL` all'origine HTTPS del backend Render, ad esempio `https://nome-servizio.onrender.com`, senza slash o percorso finale. Configura la variabile per Production e per Preview se vuoi usare anche le anteprime.
+5. Avvia una nuova distribuzione e controlla `https://TUO-DOMINIO/health`.
 
-Se è già presente un valore precedente, sostituiscilo, salva le modifiche e fai un nuovo deploy. Il codice VIP non è hardcoded nel repository perché chiunque può leggerlo se il progetto GitHub è pubblico. Il backend deve avere anche `DATABASE_URL` configurato per conservare gli account in produzione.
+Il middleware inoltra `/api/*`, `/auth/*`, `/audio/*` e `/health` al backend; le pagine e gli altri asset statici restano su Cloudflare Pages. `VIP_EMAIL_CODE` va su Render, non su Cloudflare Pages e non nel frontend.
 
-Controlla prima che `https://IL-TUO-BACKEND/health` restituisca JSON con `ok: true`.
+## Flussi di accesso
 
-### 3. Cloudflare Pages
+- **Accedi:** email + password tramite `POST /api/login`.
+- **Crea account:** email + username + password + conferma tramite `POST /api/register`.
+- **Sblocca VIP:** codice nel campo dedicato, inviato a `POST /api/vip/unlock`.
+- **Diagnostica:** `GET /health` verifica backend e stato del database.
 
-Collega lo stesso repository a Cloudflare Pages. Imposta la directory di output su `public` e un comando di build semplice come `exit 0` (il sito non richiede una build frontend). Nelle variabili di Pages configura:
+Le password vengono memorizzate con derivazione crittografica lato server. Le sessioni correnti sono mantenute in memoria dal backend e vengono invalidate quando il processo si riavvia; per una distribuzione con requisiti più elevati, sposta anche le sessioni su uno store condiviso e persistente.
 
-- `BACKEND_URL` = URL HTTPS del servizio Render, senza slash finale.
+## Controlli
 
-La variabile VIP va nel backend Render, non in `public/` e non nel JavaScript client. Dopo il deploy, visita `/health` sul dominio Pages e prova l'accesso da `/vybex`.
-
-## Login
-
-- Account esistente: inserisci email e password e premi **Accedi / continua**.
-- Nuovo account: inserisci email e password. Se l'email non è registrata, compaiono i campi per username e conferma password; completali e premi di nuovo il pulsante.
-- VIP: inserisci il codice nel campo dedicato **Codice VIP** e premi **Sblocca VIP**.
-- Ospite: continua senza email in modalità sola lettura.
-
-## Note di sicurezza e persistenza
-
-- `VIP_EMAIL_CODE` è un segreto di backend: non inserirlo in `public/app.js`, HTML, commit Git o screenshot condivisi.
-- L'account email richiede una password; la registrazione impone almeno 8 caratteri.
-- In produzione configura un database PostgreSQL persistente. Il database gratuito Render può avere limiti di durata/retention: verifica il piano prima di usarlo per dati importanti.
-- Il pacchetto sorgente è stato controllato con i verificatori di sintassi JavaScript; dopo la pubblicazione, esegui anche i test sul dominio reale.
+- `npm run check` controlla la sintassi degli script e del middleware.
+- `npm test` esegue test HTTP isolati per registrazione, login, password errata e codice VIP corretto/errato.
