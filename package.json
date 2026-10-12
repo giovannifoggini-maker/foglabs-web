@@ -1,6 +1,6 @@
 {
   "name": "foglabs",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "private": true,
   "description": "FogLabs and VYBEX guest-first build with public guest chat, shared polls, WebRTC calls, and safe Pages routing.",
   "main": "server.js",

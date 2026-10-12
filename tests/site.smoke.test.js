@@ -41,7 +41,7 @@ test('Cloudflare Pages multipage layout has no recursive _redirects rules', asyn
   const vybex = await fs.readFile(path.join(publicDir, 'vybex.html'), 'utf8');
   assert.match(index, /FogLabs/);
   assert.match(vybex, /<title>VYBEX<\/title>/);
-  assert.match(vybex, /app\.js\?v=1\.6\.4/);
+  assert.match(vybex, /app\.js\?v=1\.6\.5/);
   const app = await fs.readFile(path.join(publicDir, 'app.js'), 'utf8');
   assert.match(app, /const LOCAL_GUEST_SOUNDS = \[/);
   assert.match(app, /function guestLogin\(\)/);
@@ -55,7 +55,7 @@ test('Cloudflare Pages multipage layout has no recursive _redirects rules', asyn
   for (const name of localSounds.filter(name => name.endsWith('.wav'))) {
     assert.ok((await fs.stat(path.join(publicDir, 'sounds', name))).size > 1000, `${name} should be a non-empty sound asset`);
   }
-  assert.match(vybex, /\/app\.js\?v=1\.6\.4/);
+  assert.match(vybex, /\/app\.js\?v=1\.6\.5/);
   assert.doesNotMatch(vybex, /id="emailInput"|id="passwordInput"|id="vipCodeInput"|id="registerBtn"/);
   assert.match(vybex, /id="chatStatus"/);
   assert.doesNotMatch(vybex, /Chat pubbliche temporaneamente sospese|id="chatNameInput"[^>]*disabled/);
@@ -165,7 +165,8 @@ test('repository package has one output directory and no committed secrets', asy
   const allTextFiles = ['server.js', 'README.md', '.env.example', 'render.yaml', 'public/app.js', 'public/vybex.html'];
   for (const file of allTextFiles) {
     const contents = await fs.readFile(path.join(root, file), 'utf8');
-    assert.ok(!contents.includes('ciaosonomariowahuu'), `${file} must not contain a VIP secret`);
+    assert.doesNotMatch(contents, /VIP_EMAIL_CODE\s*=\s*\S+/, `${file} must not hardcode VIP_EMAIL_CODE`);
+    assert.doesNotMatch(contents, /(?:VIP_EMAIL_CODE|VIP_CODE)\s*[:=]\s*['"`][^'"`]{8,}['"`]/, `${file} must not hardcode a VIP code`);
   }
   const routes = JSON.parse(await fs.readFile(path.join(root, 'public', '_routes.json'), 'utf8'));
   assert.ok(routes.include.includes('/api/*') && routes.include.includes('/auth/*'));

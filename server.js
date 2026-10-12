@@ -11,7 +11,7 @@ const crypto = require("crypto");
   try{for(const line of fs.readFileSync(envPath,"utf8").split(/\r?\n/)){const m=line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^(["'])(.*)\1$/,"$2")}}catch{}
 })();
 
-const APP_VERSION = "1.6.4";
+const APP_VERSION = "1.6.5";
 const PORT = Number(process.env.PORT || 3100);
 const AUTO_SELECT_PORT = !process.env.PORT;
 let ACTIVE_PORT = PORT;

@@ -1,4 +1,4 @@
-# FogLabs / VYBEX — Community ospite 1.6.4
+# FogLabs / VYBEX — Community ospite 1.6.5
 
 Questa versione mantiene l'ingresso ospite: non chiede email, password o codice VIP. Il Soundboard ha 15 suoni WAV inclusi nel sito e può essere usato anche se il backend non è raggiungibile.
 
@@ -81,3 +81,8 @@ npm start
 ```
 
 I controlli locali verificano routing, accesso ospite, chat tra sessioni diverse, sondaggi condivisi, signaling vocale e assenza di segreti nel repository. Non sostituiscono il test del deployment online.
+
+
+## Nota per l'aggiornamento GitHub
+
+Questa versione include `tests/auth.smoke.test.js` aggiornato alla modalità ospite. Quando la copi sopra un repository già esistente, **sovrascrivi anche quel file**: il vecchio test si riferiva al precedente accesso email/password/VIP e falliva dopo la rimozione di quelle funzioni. Non eliminare l'intera cartella `tests`.
