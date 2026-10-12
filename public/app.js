@@ -330,51 +330,132 @@ applyLang(); renderRadioList(); // Guest-only build: app startup must not depend
 init();
 
 
-// LAN voice calling: WebRTC audio with local HTTP polling for signaling.
+// Public voice rooms: two-party WebRTC with HTTP signaling. Requires HTTPS and the online backend.
 (function initLanCalls(){
- const $=id=>document.getElementById(id); if(!$('voiceCreate'))return;
- let pc=null,stream=null,room='',peer='',pollTimer=null,muted=false,seen=new Set();
- const status=t=>$('voiceStatus').textContent=t;
- const post=async(url,data)=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const j=await r.json();if(!r.ok)throw Error(j.error||'Errore di rete');return j};
+ const $=id=>document.getElementById(id);if(!$('voiceCreate'))return;
+ let pc=null,stream=null,room='',peer='',pollTimer=null,muted=false,seen=new Set(),knownPeers=new Set(),offeredTo=new Set(),localCandidates=[],remoteCandidates=[];
+ const status=text=>{$('voiceStatus').textContent=text};
+ const post=async(url,data)=>{const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify(data)});const json=await response.json().catch(()=>({}));if(!response.ok)throw Error(json.message||json.error||'Servizio non raggiungibile');return json};
  const signal=async(to,payload)=>post('/api/voice/signal',{room,from:peer,to,payload});
- async function start(create){if(!navigator.mediaDevices?.getUserMedia)throw Error('Il browser blocca il microfono su questo indirizzo. Prova HTTPS oppure localhost.');
-  stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
-  peer=(($('voiceName').value||'Utente').trim().replace(/[^\p{L}\p{N}_-]/gu,'').slice(0,24)||'Utente')+'-'+Math.random().toString(36).slice(2,7);
+ async function flushLocalCandidates(to){if(!to)return;const pending=localCandidates.splice(0);for(const candidate of pending){try{await signal(to,{type:'candidate',candidate})}catch(error){status('Segnalazione audio non riuscita: '+error.message)}}}
+ async function flushRemoteCandidates(){if(!pc?.remoteDescription)return;const pending=remoteCandidates.splice(0);for(const candidate of pending){try{await pc.addIceCandidate(candidate)}catch{}}}
+ async function maybeOffer(other){if(!pc||!other||peer.localeCompare(other)<=0||offeredTo.has(other)||pc.signalingState!=='stable')return;offeredTo.add(other);try{const offer=await pc.createOffer();await pc.setLocalDescription(offer);await signal(other,{type:'offer',description:pc.localDescription});status('Invito inviato a '+other+'. Attendo la risposta…')}catch(error){offeredTo.delete(other);status('Non riesco ad avviare la chiamata: '+error.message)}}
+ async function start(create){
+  if(pc||stream)throw Error('Termina prima la chiamata attuale.');
+  // Voice signaling is rate-limited and tied to a guest session, just like public chat.
+  await ensureGuestApiSession();
+  if(!navigator.mediaDevices?.getUserMedia)throw Error('Il browser non consente il microfono qui. Usa il sito HTTPS e autorizza il microfono.');
+  if(!window.RTCPeerConnection)throw Error('Questo browser non supporta le chiamate WebRTC.');
   room=$('voiceRoom').value.trim().toUpperCase();
-  if(create){room=Math.random().toString(36).slice(2,8).toUpperCase();$('voiceRoom').value=room;await post('/api/voice/create',{room});}
-  if(!room)throw Error('Inserisci il codice stanza.');
+  if(create){let created=false;for(let attempt=0;attempt<4&&!created;attempt++){room=Array.from(crypto.getRandomValues(new Uint8Array(6)),v=>'0123456789ABCDEFGHJKMNPQRSTVWXYZ'[v%32]).join('');try{await post('/api/voice/create',{room});created=true}catch(error){if(!String(error.message).includes('room_already_exists'))throw error}}if(!created)throw Error('Non riesco a generare un codice stanza libero. Riprova.');$('voiceRoom').value=room;}
+  if(!/^[A-Z0-9]{4,10}$/.test(room))throw Error('Inserisci un codice stanza di 4–10 lettere o numeri.');
+  peer=(($('voiceName').value||'Utente').trim().replace(/[^\p{L}\p{N}_-]/gu,'').slice(0,24)||'Utente')+'-'+Math.random().toString(36).slice(2,7);
   const joined=await post('/api/voice/join',{room,peer});
-  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun.cloudflare.com:3478'}]});stream.getTracks().forEach(t=>pc.addTrack(t,stream));
-  pc.ontrack=e=>{$('voiceRemoteAudio').srcObject=e.streams[0];$('voiceRemoteAudio').play().catch(()=>{});status('🟢 Chiamata connessa.');};
-  pc.onicecandidate=e=>{if(e.candidate)joined.peers.forEach(to=>signal(to,{type:'candidate',candidate:e.candidate}).catch(()=>{}));};
-  pc.onconnectionstatechange=()=>{if(pc)status(({connected:'🟢 Chiamata connessa.',connecting:'🔄 Connessione in corso…',disconnected:'🟠 Connessione interrotta.',failed:'❌ Connessione fallita.',closed:'Chiamata terminata.'})[pc.connectionState]||pc.connectionState);};
+  knownPeers=new Set(joined.peers||[]);offeredTo=new Set();seen=new Set();localCandidates=[];remoteCandidates=[];
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});}
+  catch(error){try{await post('/api/voice/leave',{room,peer})}catch{};room='';peer='';throw error}
+  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun.cloudflare.com:3478'}]});
+  stream.getTracks().forEach(track=>pc.addTrack(track,stream));
+  pc.ontrack=event=>{$('voiceRemoteAudio').srcObject=event.streams[0];$('voiceRemoteAudio').play().catch(()=>{});status('🟢 Chiamata connessa.')};
+  pc.onicecandidate=event=>{if(!event.candidate)return;const candidate=event.candidate.toJSON?event.candidate.toJSON():event.candidate;knownPeers.forEach(to=>signal(to,{type:'candidate',candidate}).catch(()=>{}));if(!knownPeers.size)localCandidates.push(candidate)};
+  pc.onconnectionstatechange=()=>{if(pc)status(({connected:'🟢 Chiamata connessa.',connecting:'🔄 Connessione in corso…',disconnected:'🟠 Connessione interrotta.',failed:'❌ Connessione fallita: controlla rete e permessi.',closed:'Chiamata terminata.'})[pc.connectionState]||pc.connectionState)};
   $('voiceCreate').disabled=true;$('voiceJoin').disabled=true;$('voiceMute').disabled=false;$('voiceHangup').disabled=false;
-  status('Stanza '+room+' pronta. Codice da condividere: '+room+'. In attesa dell’altro dispositivo…');
-  pollTimer=setInterval(poll,450);
+  status('Stanza '+room+' pronta. Condividi il codice solo con la persona invitata. Attendo l’altro dispositivo…');
+  for(const other of knownPeers){await flushLocalCandidates(other);await maybeOffer(other)}
+  pollTimer=setInterval(poll,500);await poll();
  }
- async function poll(){if(!room||!peer)return;try{const r=await fetch('/api/voice/poll?room='+encodeURIComponent(room)+'&peer='+encodeURIComponent(peer));if(!r.ok)return;const d=await r.json();$('voicePeople').textContent='Dispositivi nella stanza: '+(d.peers.length+1);for(const m of d.messages){if(seen.has(m.id))continue;seen.add(m.id);const p=m.payload;if(p.type==='offer'&&pc){await pc.setRemoteDescription(p.description);const answer=await pc.createAnswer();await pc.setLocalDescription(answer);await signal(m.from,{type:'answer',description:pc.localDescription});}else if(p.type==='answer'&&pc){await pc.setRemoteDescription(p.description);}else if(p.type==='candidate'&&pc&&p.candidate){try{await pc.addIceCandidate(p.candidate)}catch{}}}}catch{}}
- $('voiceCreate').onclick=()=>start(true).catch(e=>status('Errore: '+e.message));
- $('voiceJoin').onclick=async()=>{try{await start(false);const r=await fetch('/api/voice/poll?room='+encodeURIComponent(room)+'&peer='+encodeURIComponent(peer));const d=await r.json();const other=d.peers[0];if(!other)status('Entrato nella stanza. Attendo l’altro dispositivo…');else{const offer=await pc.createOffer();await pc.setLocalDescription(offer);await signal(other,{type:'offer',description:pc.localDescription});status('Invito vocale inviato. Connessione in corso…')}}catch(e){status('Chiamate non disponibili: il backend online deve essere configurato. '+e.message)}};
- $('voiceMute').onclick=()=>{muted=!muted;if(stream)stream.getAudioTracks().forEach(t=>t.enabled=!muted);$('voiceMute').textContent=muted?'🔇 Riattiva microfono':'🎙️ Muto';};
- $('voiceHangup').onclick=async()=>{if(pollTimer)clearInterval(pollTimer);pollTimer=null;if(pc)pc.close();pc=null;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('voiceRemoteAudio').srcObject=null;if(room&&peer)try{await post('/api/voice/leave',{room,peer})}catch{};room='';peer='';$('voiceCreate').disabled=false;$('voiceJoin').disabled=false;$('voiceMute').disabled=true;$('voiceHangup').disabled=true;$('voicePeople').textContent='';status('Chiamata terminata.');};
+ async function poll(){if(!room||!peer)return;try{const response=await fetch('/api/voice/poll?room='+encodeURIComponent(room)+'&peer='+encodeURIComponent(peer),{credentials:'same-origin',cache:'no-store'});const data=await response.json().catch(()=>({}));if(!response.ok)throw Error(data.error||'poll_failed');for(const other of data.peers||[]){if(other===peer)continue;knownPeers.add(other);await flushLocalCandidates(other);await maybeOffer(other)}$('voicePeople').textContent='Dispositivi nella stanza: '+(new Set([peer,...(data.peers||[])]).size);
+   for(const message of data.messages||[]){if(seen.has(message.id))continue;seen.add(message.id);const payload=message.payload;if(payload.type==='offer'&&pc){await pc.setRemoteDescription(payload.description);await flushRemoteCandidates();const answer=await pc.createAnswer();await pc.setLocalDescription(answer);await signal(message.from,{type:'answer',description:pc.localDescription});status('Risposta inviata. Connessione in corso…')}
+    else if(payload.type==='answer'&&pc){await pc.setRemoteDescription(payload.description);await flushRemoteCandidates()}
+    else if(payload.type==='candidate'&&pc&&payload.candidate){if(pc.remoteDescription){try{await pc.addIceCandidate(payload.candidate)}catch{}}else remoteCandidates.push(payload.candidate)}
+   }
+  }catch(error){status('Chiamata temporaneamente non raggiungibile: '+error.message)}}
+ $('voiceCreate').onclick=()=>start(true).catch(error=>status('Impossibile creare la stanza: '+error.message));
+ $('voiceJoin').onclick=()=>start(false).catch(error=>status('Impossibile entrare: '+error.message));
+ $('voiceMute').onclick=()=>{muted=!muted;if(stream)stream.getAudioTracks().forEach(track=>track.enabled=!muted);$('voiceMute').textContent=muted?'🔇 Riattiva microfono':'🎙️ Muto'};
+ $('voiceHangup').onclick=async()=>{if(pollTimer)clearInterval(pollTimer);pollTimer=null;if(pc)pc.close();pc=null;if(stream)stream.getTracks().forEach(track=>track.stop());stream=null;$('voiceRemoteAudio').srcObject=null;if(room&&peer)try{await post('/api/voice/leave',{room,peer})}catch{};room='';peer='';knownPeers.clear();offeredTo.clear();localCandidates=[];remoteCandidates=[];$('voiceCreate').disabled=false;$('voiceJoin').disabled=false;$('voiceMute').disabled=true;$('voiceHangup').disabled=true;$('voicePeople').textContent='';$('voiceMute').textContent='🎙️ Muto';status('Chiamata terminata.')};
 })();
 
-
-// Public chats: server-authoritative roles; crown for owner, medal for admins, no member badge.
-let activePublicChat=null, chatPoll=null, chatMessagesRendered=[];
+// Public guest chats. A lightweight server session is created only when a shared feature is opened.
+let activePublicChat=null, chatPoll=null, chatSessionPromise=null, serverGuestProfile=null, chatBusy=false;
 function chatRoleBadge(role){return role==='owner'?'👑':role==='admin'?'🏅':''}
-async function loadPublicChats(){
- const list=$("chatList");
- if(list)list.innerHTML='<p>Chat pubbliche temporaneamente sospese mentre ricostruiamo l’accesso.</p>';
- const input=$("chatNameInput");if(input)input.disabled=true;
- const create=$("chatCreateForm")?.querySelector('button[type="submit"]');if(create)create.disabled=true;
- const message=$("chatMessageInput");if(message)message.disabled=true;
- const sendButton=$("chatSendForm")?.querySelector('button[type="submit"]');if(sendButton)sendButton.disabled=true;
+function communityErrorText(error){
+ const code=error?.message||'';
+ if(code==='backend_unavailable')return 'Il servizio community non è raggiungibile. Controlla BACKEND_URL su Cloudflare e che il backend Render sia attivo.';
+ if(code==='backend_configuration_invalid')return 'BACKEND_URL non è valido: configura l’URL HTTPS del backend nelle variabili Cloudflare.';
+ if(code==='not_authenticated')return 'Sessione ospite scaduta. Riprova: verrà creata una nuova sessione.';
+ if(code==='rate_limited')return 'Stai andando troppo veloce. Attendi qualche secondo e riprova.';
+ if(code==='chat_limit_reached')return 'È stato raggiunto il limite di chat pubbliche.';
+ if(code==='poll_limit_reached')return 'È stato raggiunto il limite di sondaggi pubblici.';
+ if(code==='already_voted')return 'Hai già votato a questo sondaggio.';
+ return 'Operazione non riuscita ('+(code||'errore di rete')+'). Riprova.';
 }
-async function openPublicChat(){loadPublicChats()}
-function renderPublicMessages(){loadPublicChats()}
-document.querySelector('[data-panel="chats"]')?.addEventListener('click',loadPublicChats);
+async function ensureGuestApiSession(force=false){
+ if(chatSessionPromise)return chatSessionPromise;
+ chatSessionPromise=(async()=>{
+  if(!force){try{const me=await api('/api/me');if(me.authenticated&&me.user){serverGuestProfile=me.user;return me.user}}catch{}}
+  const guest=await api('/auth/guest');
+  if(!guest.guest||!guest.user)throw new Error('backend_unavailable');
+  serverGuestProfile=guest.user;return guest.user;
+ })().finally(()=>{chatSessionPromise=null});
+ return chatSessionPromise;
+}
+function chatApiFetch(url,options){return api(url,{credentials:'same-origin',cache:'no-store',...(options||{})})}
+function renderPublicChatList(chats){
+ const root=$("chatList");if(!root)return;root.replaceChildren();
+ if(!chats.length){const p=document.createElement('p');p.className='hint';p.textContent='Non ci sono ancora chat pubbliche. Creane una per iniziare.';root.appendChild(p);return}
+ for(const chat of chats){const b=document.createElement('button');b.type='button';b.className='chat-list-item'+(activePublicChat?.id===chat.id?' active':'');b.dataset.chatId=chat.id;
+  const title=document.createElement('span');title.textContent=chat.name;
+  const detail=document.createElement('small');detail.textContent='Creata da '+(chat.ownerName||'Ospite');
+  b.append(title,detail);b.addEventListener('click',()=>openPublicChat(chat.id));root.appendChild(b);
+ }
+}
+function renderPublicMessages(chat){
+ const root=$("chatMessages");if(!root)return;const keepAtBottom=root.scrollHeight-root.scrollTop-root.clientHeight<48;root.replaceChildren();
+ if(!chat?.messages?.length){const p=document.createElement('p');p.className='hint';p.textContent='Nessun messaggio. Scrivi il primo messaggio!';root.appendChild(p);return}
+ const fragment=document.createDocumentFragment();
+ for(const message of chat.messages){const item=document.createElement('article');item.className='chat-message';const meta=document.createElement('div');const author=document.createElement('strong');author.textContent=message.username||'Ospite';meta.appendChild(author);const badge=chatRoleBadge(message.role);if(badge){meta.appendChild(document.createTextNode(' '+badge+' '))}const time=document.createElement('small');const parsed=Date.parse(message.createdAt||'');time.textContent=Number.isFinite(parsed)?' · '+new Date(parsed).toLocaleString() : '';meta.appendChild(time);const body=document.createElement('p');body.textContent=message.text||'';item.append(meta,body);fragment.appendChild(item)}
+ root.appendChild(fragment);if(keepAtBottom)root.scrollTop=root.scrollHeight;
+}
+async function refreshPublicChatMessages(){if(!activePublicChat)return;const data=await chatApiFetch('/api/chats/messages?id='+encodeURIComponent(activePublicChat.id));activePublicChat=data.chat;renderPublicMessages(activePublicChat);const input=$('chatMessageInput'),send=$('chatSendForm')?.querySelector('button[type="submit"]');if(input)input.disabled=false;if(send)send.disabled=false;if($('chatHeading'))$('chatHeading').innerHTML='<h3>'+esc(activePublicChat.name)+'</h3><small>Chat pubblica · messaggi visibili a tutti</small>';}
+async function loadPublicChats(silent=false){
+ const list=$("chatList");if(!list||chatBusy)return;chatBusy=true;
+ if(!silent)list.innerHTML='<p class="hint">Connessione alla community…</p>';
+ const status=$('chatStatus');
+ try{
+  const profile=await ensureGuestApiSession();
+  const data=await chatApiFetch('/api/chats');
+  renderPublicChatList(Array.isArray(data.chats)?data.chats:[]);
+  if(status)status.textContent='Connesso come '+(profile.username||'Ospite')+'. Usa un nickname pubblico e non condividere dati personali.';
+  const nameInput=$('chatNameInput'),create=$('chatCreateForm')?.querySelector('button[type="submit"]');if(nameInput)nameInput.disabled=false;if(create)create.disabled=false;
+  if(activePublicChat){const stillExists=(data.chats||[]).some(c=>c.id===activePublicChat.id);if(stillExists){try{await refreshPublicChatMessages()}catch(error){if(error.message==='not_authenticated'){serverGuestProfile=null;await ensureGuestApiSession(true);await refreshPublicChatMessages()}else throw error}}else{activePublicChat=null;if($('chatHeading'))$('chatHeading').innerHTML='<h3>Seleziona una chat</h3>';if($('chatMessages'))$('chatMessages').textContent='La chat non esiste più.';if($('chatMessageInput'))$('chatMessageInput').disabled=true;const send=$('chatSendForm')?.querySelector('button[type="submit"]');if(send)send.disabled=true}}
+  if(!chatPoll)chatPoll=setInterval(()=>{if(!$('panel-chats')?.hidden&&!chatBusy)loadPublicChats(true)},5000);
+ }catch(error){if(status)status.textContent=communityErrorText(error);list.innerHTML='<p class="hint">'+esc(communityErrorText(error))+'</p>';const ci=$('chatNameInput'),cb=$('chatCreateForm')?.querySelector('button[type="submit"]');if(ci)ci.disabled=true;if(cb)cb.disabled=true;if($('chatMessageInput'))$('chatMessageInput').disabled=true;const sb=$('chatSendForm')?.querySelector('button[type="submit"]');if(sb)sb.disabled=true}
+ finally{chatBusy=false}
+}
+async function openPublicChat(id){
+ try{await ensureGuestApiSession();const data=await chatApiFetch('/api/chats/messages?id='+encodeURIComponent(id));activePublicChat=data.chat;renderPublicChatList((await chatApiFetch('/api/chats')).chats||[]);await refreshPublicChatMessages();$('chatMessageInput')?.focus()}
+ catch(error){if(error.message==='not_authenticated'){try{serverGuestProfile=null;await ensureGuestApiSession(true);return openPublicChat(id)}catch{}}const status=$('chatStatus');if(status)status.textContent=communityErrorText(error);}
+}
+async function createPublicChat(event){event.preventDefault();const input=$('chatNameInput'),button=$('chatCreateForm')?.querySelector('button[type="submit"]'),name=(input?.value||'').trim();if(name.length<2){if($('chatStatus'))$('chatStatus').textContent='Il nome della chat deve avere almeno 2 caratteri.';return}if(button)button.disabled=true;
+ try{await ensureGuestApiSession();const data=await chatApiFetch('/api/chats/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});input.value='';activePublicChat=data.chat;await loadPublicChats();await openPublicChat(data.chat.id)}catch(error){if($('chatStatus'))$('chatStatus').textContent=communityErrorText(error)}finally{if(button)button.disabled=false}}
+async function sendPublicChatMessage(event){event.preventDefault();const input=$('chatMessageInput'),button=$('chatSendForm')?.querySelector('button[type="submit"]'),text=(input?.value||'').trim();if(!activePublicChat||!text)return;if(button)button.disabled=true;
+ try{await ensureGuestApiSession();await chatApiFetch('/api/chats/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:activePublicChat.id,text})});input.value='';await refreshPublicChatMessages()}
+ catch(error){if(error.message==='not_authenticated'){try{serverGuestProfile=null;await ensureGuestApiSession(true);await chatApiFetch('/api/chats/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:activePublicChat.id,text})});input.value='';await refreshPublicChatMessages()}catch(retryError){if($('chatStatus'))$('chatStatus').textContent=communityErrorText(retryError)}}else if($('chatStatus'))$('chatStatus').textContent=communityErrorText(error)}finally{if(button)button.disabled=!activePublicChat}}
+function initPublicChats(){
+ $('chatCreateForm')?.addEventListener('submit',createPublicChat);$('chatSendForm')?.addEventListener('submit',sendPublicChatMessage);$('chatAdminForm')?.setAttribute('hidden','');
+ document.querySelector('[data-panel="chats"]')?.addEventListener('click',()=>loadPublicChats());
+}
+initPublicChats();
 
+// Shared public polls: guests can create polls and vote through the same backend as the chat.
+(()=>{const root=$('pollList'),form=$('pollCreateForm');if(!root||!form)return;let polls=[],pollLoadBusy=false;
+ const status=message=>{const node=$('pollStatus');if(node)node.textContent=message};
+ const render=()=>{root.replaceChildren();if(!polls.length){const p=document.createElement('p');p.className='hint';p.textContent='Nessun sondaggio ancora. Creane uno qui sopra.';root.appendChild(p);return}for(const poll of polls){const box=document.createElement('div');box.className='poll-item';const title=document.createElement('h4');title.textContent=poll.question;const detail=document.createElement('small');detail.textContent='Creato da '+(poll.ownerName||'Ospite');box.append(title,detail);const total=(poll.options||[]).reduce((sum,o)=>sum+Number(o.votes||0),0);(poll.options||[]).forEach((option,index)=>{const label=document.createElement('label');label.className='poll-option';const radio=document.createElement('input');radio.type='radio';radio.name='poll-'+poll.id;radio.checked=poll.myVote===index;radio.addEventListener('change',async()=>{radio.disabled=true;try{await ensureGuestApiSession();await chatApiFetch('/api/polls/vote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:poll.id,optionIndex:index})});await loadPublicPolls(true)}catch(error){status(communityErrorText(error));radio.disabled=false}});const text=document.createElement('span');text.textContent=option.label+' — '+option.votes+' voti';const bar=document.createElement('div');bar.className='poll-bar';const fill=document.createElement('span');fill.style.width=(total?Number(option.votes||0)/total*100:0)+'%';bar.appendChild(fill);label.append(radio,text,bar);box.appendChild(label)});if(poll.myVote!==null&&poll.myVote!==undefined){const voted=document.createElement('small');voted.textContent='Puoi cambiare voto selezionando un’altra opzione.';box.appendChild(voted)}if(poll.canDelete){const del=document.createElement('button');del.className='ghost';del.type='button';del.textContent='Elimina sondaggio';del.addEventListener('click',async()=>{if(!confirm('Eliminare questo sondaggio pubblico?'))return;try{await chatApiFetch('/api/polls/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:poll.id})});await loadPublicPolls(true)}catch(error){status(communityErrorText(error))}});box.appendChild(del)}root.appendChild(box)}};
+ async function loadPublicPolls(silent=false){if(pollLoadBusy)return;pollLoadBusy=true;if(!silent)root.innerHTML='<p class="hint">Caricamento sondaggi pubblici…</p>';try{await ensureGuestApiSession();const data=await chatApiFetch('/api/polls');polls=Array.isArray(data.polls)?data.polls:[];render();status('Sondaggi condivisi tra gli ospiti. Ogni sessione può mantenere un solo voto per sondaggio.')}catch(error){if(!polls.length)root.innerHTML='<p class="hint">'+esc(communityErrorText(error))+'</p>';status(communityErrorText(error))}finally{pollLoadBusy=false}}
+ form.addEventListener('submit',async event=>{event.preventDefault();const question=$('pollQuestion').value.trim(),options=$('pollOptions').value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,8);if(question.length<4||options.length<2){status('Inserisci una domanda di almeno 4 caratteri e almeno 2 opzioni.');return}const button=form.querySelector('button[type="submit"]');if(button)button.disabled=true;try{await ensureGuestApiSession();await chatApiFetch('/api/polls/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question,options})});$('pollQuestion').value='';$('pollOptions').value='';await loadPublicPolls(true)}catch(error){status(communityErrorText(error))}finally{if(button)button.disabled=false}});
+ document.querySelector('[data-panel="chats"]')?.addEventListener('click',()=>loadPublicPolls());
+ setInterval(()=>{if(!$('panel-chats')?.hidden&&!pollLoadBusy)loadPublicPolls(true)},12000);
+})();
 
-// Polls prototype: stored locally in this browser (not yet shared between users).
-(()=>{const $=id=>document.getElementById(id);const key='soundboard-polls-v1';let polls=[];try{polls=JSON.parse(localStorage.getItem(key)||'[]')}catch{};const save=()=>localStorage.setItem(key,JSON.stringify(polls));const render=()=>{const root=$('pollList');if(!root)return;root.innerHTML='';if(!polls.length){root.innerHTML='<p class="hint">Nessun sondaggio ancora. Creane uno qui sopra.</p>';return}polls.forEach((p,pi)=>{const total=p.votes.reduce((a,b)=>a+b,0),box=document.createElement('div');box.className='poll-item';const h=document.createElement('h4');h.textContent=p.question;box.appendChild(h);p.options.forEach((o,i)=>{const label=document.createElement('label');label.className='poll-option';const radio=document.createElement('input');radio.type='radio';radio.name='poll-'+pi;radio.checked=p.myVote===i;radio.onchange=()=>{if(p.myVote!==null)p.votes[p.myVote]=Math.max(0,p.votes[p.myVote]-1);p.myVote=i;p.votes[i]++;save();render()};label.append(radio,document.createTextNode(o+' — '+p.votes[i]+' voti'));const bar=document.createElement('div');bar.className='poll-bar';const fill=document.createElement('span');fill.style.width=(total?p.votes[i]/total*100:0)+'%';bar.appendChild(fill);box.append(label,bar)});const del=document.createElement('button');del.className='ghost';del.textContent='Elimina';del.onclick=()=>{polls.splice(pi,1);save();render()};box.appendChild(del);root.appendChild(box)})};$('pollCreateForm')?.addEventListener('submit',e=>{e.preventDefault();const question=$('pollQuestion').value.trim(),options=$('pollOptions').value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,8);if(!question||options.length<2){toast('Inserisci una domanda e almeno due opzioni');return}polls.unshift({question,options,votes:options.map(()=>0),myVote:null});save();$('pollQuestion').value='';$('pollOptions').value='';render()});render();const ideas={'🎲 Voto casuale del giorno':'Ogni giorno la community vota un suono e il Soundboard lo mette in evidenza.','🏆 Classifica suoni più usati':'Una classifica dei suoni preferiti, aggiornata quando si registra l utilizzo.','🎭 Sticker della community':'Gli utenti possono proporre sticker PNG e votare i preferiti.','🎧 Sfide DJ settimanali':'Una sfida a tema ogni settimana con mix di suoni e voto della community.'};document.querySelectorAll('.idea-pick').forEach(b=>b.onclick=()=>{$('ideaText').textContent=ideas[b.textContent.trim()]||'Idea selezionata.'});document.querySelectorAll('.sticker-preset').forEach(b=>b.onclick=()=>{const e=$('emojiMakerEmoji'),t=$('emojiMakerText');if(e)e.value=b.dataset.emoji;if(t)t.value=b.dataset.text;$('emojiMakerPreview')?.click()})})();
+const ideas={'🎲 Voto casuale del giorno':'Ogni giorno la community vota un suono e il Soundboard lo mette in evidenza.','🏆 Classifica suoni più usati':'Una classifica dei suoni preferiti, aggiornata quando si registra l utilizzo.','🎭 Sticker della community':'Gli utenti possono proporre sticker PNG e votare i preferiti.','🎧 Sfide DJ settimanali':'Una sfida a tema ogni settimana con mix di suoni e voto della community.'};document.querySelectorAll('.idea-pick').forEach(b=>b.onclick=()=>{$('ideaText').textContent=ideas[b.textContent.trim()]||'Idea selezionata.'});document.querySelectorAll('.sticker-preset').forEach(b=>b.onclick=()=>{const e=$('emojiMakerEmoji'),t=$('emojiMakerText');if(e)e.value=b.dataset.emoji;if(t)t.value=b.dataset.text;$('emojiMakerPreview')?.click()});

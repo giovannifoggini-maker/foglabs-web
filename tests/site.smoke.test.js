@@ -41,20 +41,24 @@ test('Cloudflare Pages multipage layout has no recursive _redirects rules', asyn
   const vybex = await fs.readFile(path.join(publicDir, 'vybex.html'), 'utf8');
   assert.match(index, /FogLabs/);
   assert.match(vybex, /<title>VYBEX<\/title>/);
-  assert.match(vybex, /app\.js\?v=1\.6\.3/);
+  assert.match(vybex, /app\.js\?v=1\.6\.4/);
   const app = await fs.readFile(path.join(publicDir, 'app.js'), 'utf8');
   assert.match(app, /const LOCAL_GUEST_SOUNDS = \[/);
   assert.match(app, /function guestLogin\(\)/);
-  assert.doesNotMatch(app, /fetch\(['"]\/auth\/guest/);
-  assert.doesNotMatch(app, /api\(['"]\/api\/me/);
+  assert.match(app, /async function ensureGuestApiSession/);
+  assert.match(app, /async function loadPublicChats/);
+  assert.match(app, /function initPublicChats/);
+  assert.match(app, /async function loadPublicPolls/);
   assert.match(app, /showBoard\(\{visitorCount:1,user:\{id:\"local-guest\"/);
   const localSounds = await fs.readdir(path.join(publicDir, 'sounds'));
   assert.equal(localSounds.filter(name => name.endsWith('.wav')).length, 15);
   for (const name of localSounds.filter(name => name.endsWith('.wav'))) {
     assert.ok((await fs.stat(path.join(publicDir, 'sounds', name))).size > 1000, `${name} should be a non-empty sound asset`);
   }
-  assert.match(vybex, /\/app\.js\?v=1\.6\.3/);
+  assert.match(vybex, /\/app\.js\?v=1\.6\.4/);
   assert.doesNotMatch(vybex, /id="emailInput"|id="passwordInput"|id="vipCodeInput"|id="registerBtn"/);
+  assert.match(vybex, /id="chatStatus"/);
+  assert.doesNotMatch(vybex, /Chat pubbliche temporaneamente sospese|id="chatNameInput"[^>]*disabled/);
   assert.doesNotMatch(app, /function emailLogin|function registerAccount|function vipLogin|\/api\/vip\/unlock|\/api\/register/);
   const htmlFiles = await fs.readdir(publicDir);
   for (const name of ['foglabs.html', 'index.html', 'vybex.html', 'randomizer.html', 'nametag.html', 'minewiki.html', '404.html']) assert.ok(htmlFiles.includes(name), `missing public/${name}`);
@@ -83,16 +87,70 @@ test('backend serves FogLabs home and VYBEX directly without redirect chains; gu
     assert.equal(guest.headers.get('location'), null);
     const who = await fetch(origin + '/api/me', { headers: { Cookie: cookieFrom(guest) } }).then(r => r.json());
     assert.equal(who.authenticated, true);
-    assert.equal(who.user.username, 'Ospite');
+    assert.match(who.user.username, /^Ospite-[A-F0-9]{4}$/);
     assert.equal(who.user.canEdit, false);
     const soundResponse = await fetch(origin + '/sounds/coin.wav');
     assert.equal(soundResponse.status, 200);
     assert.match(soundResponse.headers.get('content-type') || '', /audio\/wav/);
     assert.ok((await soundResponse.arrayBuffer()).byteLength > 1000);
+    const guestCookie = cookieFrom(guest);
+    const createChat = await fetch(origin + '/api/chats/create', { method: 'POST', headers: { Cookie: guestCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Chat di test' }) });
+    assert.equal(createChat.status, 200, 'guests should be able to create a public chat');
+    const createdChat = await createChat.json();
+    const guest2 = await fetch(origin + '/auth/guest');
+    const guest2Cookie = cookieFrom(guest2);
+    const chatList = await fetch(origin + '/api/chats', { headers: { Cookie: guest2Cookie } }).then(r => r.json());
+    assert.ok(chatList.chats.some(c => c.id === createdChat.chat.id && c.name === 'Chat di test'), 'another guest should see the shared chat');
+    const sendMessage = await fetch(origin + '/api/chats/send', { method: 'POST', headers: { Cookie: guestCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: createdChat.chat.id, text: '<script>no html</script> hello' }) });
+    assert.equal(sendMessage.status, 200, 'guests should be able to send public chat messages');
+    const chatData = await fetch(origin + '/api/chats/messages?id=' + encodeURIComponent(createdChat.chat.id), { headers: { Cookie: guest2Cookie } }).then(r => r.json());
+    assert.equal(chatData.chat.messages.length, 1);
+    assert.equal(chatData.chat.messages[0].text, '<script>no html</script> hello', 'client renders message bodies as text, not executable HTML');
+
+    const createPoll = await fetch(origin + '/api/polls/create', { method: 'POST', headers: { Cookie: guestCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ question: 'Quale funzione vuoi?', options: ['Chat', 'Radio', 'DJ'] }) });
+    assert.equal(createPoll.status, 200, 'guests should be able to create a shared poll');
+    const pollInfo = await createPoll.json();
+    const vote = await fetch(origin + '/api/polls/vote', { method: 'POST', headers: { Cookie: guest2Cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pollInfo.id, optionIndex: 1 }) });
+    assert.equal(vote.status, 200, 'guests should be able to vote');
+    const pollList = await fetch(origin + '/api/polls', { headers: { Cookie: guestCookie } }).then(r => r.json());
+    assert.equal(pollList.polls.find(p => p.id === pollInfo.id).options[1].votes, 1);
+    assert.equal(pollList.polls.find(p => p.id === pollInfo.id).myVote, null, 'vote belongs to the other guest session');
+
+    const voiceCreate = await fetch(origin + '/api/voice/create', { method: 'POST', headers: { Cookie: guestCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ room: 'ROOM12' }) });
+    assert.equal(voiceCreate.status, 200, 'a guest session should be able to create a voice room');
+    const voiceJoin1 = await fetch(origin + '/api/voice/join', { method: 'POST', headers: { Cookie: guestCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ room: 'ROOM12', peer: 'peer-one' }) });
+    assert.equal(voiceJoin1.status, 200);
+    const voiceJoin2 = await fetch(origin + '/api/voice/join', { method: 'POST', headers: { Cookie: guest2Cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ room: 'ROOM12', peer: 'peer-two' }) });
+    assert.equal(voiceJoin2.status, 200);
+    assert.deepEqual((await voiceJoin2.json()).peers, ['peer-one']);
+    const voicePoll = await fetch(origin + '/api/voice/poll?room=ROOM12&peer=peer-one', { headers: { Cookie: guestCookie } });
+    assert.equal(voicePoll.status, 200);
+    assert.deepEqual((await voicePoll.json()).peers, ['peer-two']);
+    const voiceJoin3 = await fetch(origin + '/api/voice/join', { method: 'POST', headers: { Cookie: cookieFrom(await fetch(origin + '/auth/guest')), 'Content-Type': 'application/json' }, body: JSON.stringify({ room: 'ROOM12', peer: 'peer-three' }) });
+    assert.equal(voiceJoin3.status, 409, 'voice rooms should be limited to two participants');
+    const spoofedSignal = await fetch(origin + '/api/voice/signal', { method: 'POST', headers: { Cookie: guestCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ room: 'ROOM12', from: 'fake-peer', to: 'peer-two', payload: { type: 'offer', description: { type: 'offer', sdp: 'test' } } }) });
+    assert.equal(spoofedSignal.status, 400, 'voice signaling must only allow joined peers');
+    const validSignal = await fetch(origin + '/api/voice/signal', { method: 'POST', headers: { Cookie: guestCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ room: 'ROOM12', from: 'peer-one', to: 'peer-two', payload: { type: 'offer', description: { type: 'offer', sdp: 'v=0\r\n' } } }) });
+    assert.equal(validSignal.status, 200);
+    const voiceMessages = await fetch(origin + '/api/voice/poll?room=ROOM12&peer=peer-two', { headers: { Cookie: guest2Cookie } }).then(r => r.json());
+    assert.equal(voiceMessages.messages.length, 1);
+    const unauthVoice = await fetch(origin + '/api/voice/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room: 'NOAUTH' }) });
+    assert.equal(unauthVoice.status, 401, 'voice endpoints should require a guest session');
     for (const route of ['/api/login', '/api/register', '/api/vip/unlock']) {
       const response = await fetch(origin + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       assert.equal(response.status, 410, `${route} should be disabled in this build`);
     }
+    // Restart the local backend and make sure public community data was persisted.
+    child.kill('SIGTERM');
+    await new Promise(resolve => child.once('exit', resolve));
+    child = spawn(process.execPath, ['server.js'], { cwd: temp, env: { ...process.env, NODE_ENV: 'development', PORT: String(port), NO_BROWSER: '1', DATABASE_URL: '' }, stdio: 'ignore' });
+    await waitReady(origin, child);
+    const guest3 = await fetch(origin + '/auth/guest');
+    const guest3Cookie = cookieFrom(guest3);
+    const persistedChats = await fetch(origin + '/api/chats', { headers: { Cookie: guest3Cookie } }).then(r => r.json());
+    assert.ok(persistedChats.chats.some(c => c.id === createdChat.chat.id), 'public chats should survive a local backend restart');
+    const persistedPolls = await fetch(origin + '/api/polls', { headers: { Cookie: guest3Cookie } }).then(r => r.json());
+    assert.ok(persistedPolls.polls.some(p => p.id === pollInfo.id), 'public polls should survive a local backend restart');
   } finally {
     if (child && child.exitCode === null) child.kill('SIGTERM');
     await fs.rm(temp, { recursive: true, force: true });

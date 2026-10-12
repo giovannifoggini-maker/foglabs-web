@@ -11,7 +11,7 @@ const crypto = require("crypto");
   try{for(const line of fs.readFileSync(envPath,"utf8").split(/\r?\n/)){const m=line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^(["'])(.*)\1$/,"$2")}}catch{}
 })();
 
-const APP_VERSION = "1.6.3";
+const APP_VERSION = "1.6.4";
 const PORT = Number(process.env.PORT || 3100);
 const AUTO_SELECT_PORT = !process.env.PORT;
 let ACTIVE_PORT = PORT;
@@ -24,8 +24,11 @@ fs.mkdirSync(DATA, {recursive:true});
 const USERS_FILE = path.join(DATA, "users.json");
 const SOUNDS_FILE = path.join(DATA, "sounds.json");
 const CHATS_FILE = path.join(DATA, "public-chats.json");
+const POLLS_FILE = path.join(DATA, "public-polls.json");
 let publicChats = loadJson(CHATS_FILE, []);
 if (!Array.isArray(publicChats)) publicChats = [];
+let publicPolls = loadJson(POLLS_FILE, []);
+if (!Array.isArray(publicPolls)) publicPolls = [];
 const sessions = new Map();
 const voiceRooms = new Map();
 const discordOAuthStates = new Map();
@@ -70,7 +73,7 @@ function queueDatabasePersist(){
     }
     await dbPool.query(
       "INSERT INTO foglabs_state (id, state, updated_at) VALUES (1, $1::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = NOW()",
-      [JSON.stringify({users, sounds, publicChats})]
+      [JSON.stringify({users, sounds, publicChats, publicPolls})]
     );
   }).then(()=>undefined);
   dbWriteQueue=next;
@@ -97,9 +100,10 @@ async function initDatabase(){
     legacyUsers=state.users&&typeof state.users==="object"?state.users:{};
     sounds=Array.isArray(state.sounds)&&state.sounds.length?state.sounds:demoSounds;
     publicChats=Array.isArray(state.publicChats)?state.publicChats:[];
+    publicPolls=Array.isArray(state.publicPolls)?state.publicPolls:[];
   } else {
     legacyUsers={...users};
-    await dbPool.query("INSERT INTO foglabs_state (id,state,updated_at) VALUES (1,$1::jsonb,NOW())",[JSON.stringify({users:legacyUsers,sounds,publicChats})]);
+    await dbPool.query("INSERT INTO foglabs_state (id,state,updated_at) VALUES (1,$1::jsonb,NOW())",[JSON.stringify({users:legacyUsers,sounds,publicChats,publicPolls})]);
   }
 
   // One-time-compatible migration from the legacy JSONB account map.
@@ -156,6 +160,17 @@ function createSession(user={id:"test",username:"TestUser",email:null,canEdit:fa
 }
 function cookie(sid){return `dsb_session=${sid}; Path=/; HttpOnly; SameSite=Lax${process.env.NODE_ENV === "production" ? "; Secure" : ""}`}
 function requireAuth(req,res){const user=sessionUser(req);if(!user){send(res,401,{error:"not_authenticated"});return null}return user}
+const actionWindows = new Map();
+function allowRate(key, limit, windowMs) {
+  const now = Date.now();
+  const recent = (actionWindows.get(key) || []).filter(t => now - t < windowMs);
+  if (recent.length >= limit) { actionWindows.set(key, recent); return false; }
+  recent.push(now); actionWindows.set(key, recent);
+  if (actionWindows.size > 3000) {
+    for (const [k, times] of actionWindows) if (!times.length || now - times[times.length - 1] > 60 * 60 * 1000) actionWindows.delete(k);
+  }
+  return true;
+}
 function safeName(v,fallback="Uploaded sound"){return String(v||fallback).replace(/[\\/:*?"<>|]/g," ").trim().slice(0,60)||fallback}
 function publicSound(s){return {...s}}
 function serveFile(res,filePath){const abs=path.resolve(filePath);if(!abs.startsWith(path.resolve(ROOT)))return send(res,403,"Forbidden","text/plain; charset=utf-8");if(!fs.existsSync(abs))return send(res,404,"Not found","text/plain; charset=utf-8");const ext=path.extname(abs).toLowerCase();const types={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".wav":"audio/wav",".mp3":"audio/mpeg",".ogg":"audio/ogg",".m4a":"audio/mp4",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png"};const stat=fs.statSync(abs);const cacheControl=[".html",".js",".css"].includes(ext)?"no-cache, no-store, must-revalidate":"public, max-age=300";res.writeHead(200,{"Content-Type":types[ext]||"application/octet-stream","Content-Length":stat.size,"Cache-Control":cacheControl,"X-Content-Type-Options":"nosniff"});fs.createReadStream(abs).pipe(res)}
@@ -202,8 +217,14 @@ const server=http.createServer(async (req,res)=>{
     if(dbPool){try{await dbPool.query("SELECT 1");}catch{return send(res,503,{ok:false,database:false});}}
     return send(res,200,{ok:true,database:!!dbPool,guestAccess:true,version:APP_VERSION,environment:process.env.NODE_ENV==="production"?"production":"development"});
   }
-  // Guest entry creates a read-only session. The old test alias is development-only.
-  if(u.pathname==="/auth/guest"&&req.method==="GET"){const {sid,user}=createSession({id:"guest-"+crypto.randomBytes(8).toString("hex"),username:"Ospite",email:null,canEdit:false});return send(res,200,{ok:true,guest:true,user:{id:user.id,username:user.username,canEdit:false}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid),"Cache-Control":"no-store"})}
+  // Guest mode has no email/password. Reuse a live guest cookie so chat identity stays stable.
+  if(u.pathname==="/auth/guest"&&req.method==="GET"){
+    const existing=sessionUser(req);
+    if(existing&&!existing.email&&String(existing.id||"").startsWith("guest-"))return send(res,200,{ok:true,guest:true,user:{id:existing.id,username:existing.username,canEdit:false}},"application/json; charset=utf-8",{"Cache-Control":"no-store"});
+    const suffix=crypto.randomBytes(2).toString("hex").toUpperCase();
+    const {sid,user}=createSession({id:"guest-"+crypto.randomBytes(8).toString("hex"),username:"Ospite-"+suffix,email:null,canEdit:false,vip:false});
+    return send(res,200,{ok:true,guest:true,user:{id:user.id,username:user.username,canEdit:false}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid),"Cache-Control":"no-store"});
+  }
   if(u.pathname==="/auth/test"&&req.method==="GET"){
     if(process.env.NODE_ENV==="production")return send(res,404,{error:"not_found"});
     const {sid,user}=createSession({id:"guest-test-"+crypto.randomBytes(8).toString("hex"),username:"Ospite",email:null,canEdit:false});return send(res,200,{ok:true,guest:true,user:{id:user.id,username:user.username,canEdit:false}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)})
@@ -217,21 +238,41 @@ const server=http.createServer(async (req,res)=>{
     return send(res,410,{error:"account_features_disabled",message:"Account access is disabled in this build."});
   }
   if(u.pathname==="/api/chats"&&req.method==="GET"){
-    const user=sessionUser(req);const chats=publicChats.map(c=>({id:c.id,name:c.name,owner:c.owner,memberCount:1+(c.admins||[]).length,createdAt:c.createdAt}));
-    return send(res,200,{chats,authenticated:!!(user&&user.email)});
+    const user=sessionUser(req);
+    const chats=publicChats.map(c=>({id:c.id,name:c.name,owner:c.owner,ownerName:c.ownerName||"Ospite",memberCount:1+(c.admins||[]).length,createdAt:c.createdAt}));
+    return send(res,200,{chats,authenticated:!!user,guest:!!user&&!user.email,username:user?.username||null});
   }
   if(u.pathname==="/api/chats/create"&&req.method==="POST"){
-    const user=requireAuth(req,res);if(!user)return;if(!user.email)return send(res,403,{error:"registered_account_required"});
-    return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const name=String(b.name||"").trim().replace(/[<>]/g,"").slice(0,40);if(name.length<2)return send(res,400,{error:"invalid_chat_name"});if(publicChats.length>=100)return send(res,429,{error:"chat_limit_reached"});const chat={id:crypto.randomBytes(5).toString("hex").toUpperCase(),name,owner:user.id,ownerName:user.username,admins:[],messages:[],createdAt:new Date().toISOString()};publicChats.unshift(chat);saveJson(CHATS_FILE,publicChats);return send(res,200,{ok:true,chat:{id:chat.id,name:chat.name,owner:chat.owner,ownerName:chat.ownerName,admins:chat.admins,messages:chat.messages}})});
+    const user=requireAuth(req,res);if(!user)return;
+    if(!allowRate("chat-create:"+user.id,4,60*60*1000))return send(res,429,{error:"rate_limited"});
+    return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const name=String(b.name||"").trim().replace(/[<>\u0000-\u001f\u007f]/g,"").replace(/\s+/g," ").slice(0,40);if(name.length<2)return send(res,400,{error:"invalid_chat_name"});if(publicChats.length>=100)return send(res,429,{error:"chat_limit_reached"});const chat={id:crypto.randomBytes(5).toString("hex").toUpperCase(),name,owner:user.id,ownerName:String(user.username||"Ospite").slice(0,32),admins:[],messages:[],createdAt:new Date().toISOString()};publicChats.unshift(chat);saveJson(CHATS_FILE,publicChats);return send(res,200,{ok:true,chat:{id:chat.id,name:chat.name,owner:chat.owner,ownerName:chat.ownerName,admins:chat.admins,messages:chat.messages}})});
   }
   if(u.pathname==="/api/chats/messages"&&req.method==="GET"){
-    const user=requireAuth(req,res);if(!user)return;if(!user.email)return send(res,403,{error:"registered_account_required"});const id=String(u.searchParams.get("id")||"");const c=publicChats.find(x=>x.id===id);if(!c)return send(res,404,{error:"chat_not_found"});const role=c.owner===user.id?"owner":(c.admins||[]).includes(user.id)?"admin":"member";return send(res,200,{chat:{id:c.id,name:c.name,owner:c.owner,ownerName:c.ownerName,admins:c.admins||[],role,messages:(c.messages||[]).map(m=>({...m,role:m.userId===c.owner?"owner":(c.admins||[]).includes(m.userId)?"admin":"member"}))}});
+    const user=requireAuth(req,res);if(!user)return;const id=String(u.searchParams.get("id")||"");const c=publicChats.find(x=>x.id===id);if(!c)return send(res,404,{error:"chat_not_found"});const role=c.owner===user.id?"owner":(c.admins||[]).includes(user.id)?"admin":"member";return send(res,200,{chat:{id:c.id,name:c.name,owner:c.owner,ownerName:c.ownerName||"Ospite",admins:c.admins||[],role,messages:(c.messages||[]).map(m=>({...m,role:m.userId===c.owner?"owner":(c.admins||[]).includes(m.userId)?"admin":"member"}))}});
   }
   if(u.pathname==="/api/chats/send"&&req.method==="POST"){
-    const user=requireAuth(req,res);if(!user)return;if(!user.email)return send(res,403,{error:"registered_account_required"});return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const c=publicChats.find(x=>x.id===String(b.id||""));if(!c)return send(res,404,{error:"chat_not_found"});const text=String(b.text||"").trim().slice(0,1000);if(!text)return send(res,400,{error:"empty_message"});c.messages=c.messages||[];c.messages.push({id:crypto.randomBytes(6).toString("hex"),userId:user.id,username:user.username,text,createdAt:new Date().toISOString()});if(c.messages.length>300)c.messages=c.messages.slice(-300);saveJson(CHATS_FILE,publicChats);return send(res,200,{ok:true});});
+    const user=requireAuth(req,res);if(!user)return;
+    if(!allowRate("chat-send:"+user.id,8,10*1000))return send(res,429,{error:"rate_limited"});
+    return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const c=publicChats.find(x=>x.id===String(b.id||""));if(!c)return send(res,404,{error:"chat_not_found"});const text=String(b.text||"").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,"").trim().slice(0,1000);if(!text)return send(res,400,{error:"empty_message"});c.messages=c.messages||[];c.messages.push({id:crypto.randomBytes(6).toString("hex"),userId:user.id,username:String(user.username||"Ospite").slice(0,32),text,createdAt:new Date().toISOString()});if(c.messages.length>300)c.messages=c.messages.slice(-300);saveJson(CHATS_FILE,publicChats);return send(res,200,{ok:true});});
   }
   if(u.pathname==="/api/chats/admin"&&req.method==="POST"){
     const user=requireAuth(req,res);if(!user)return;if(!user.email)return send(res,403,{error:"registered_account_required"});return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const c=publicChats.find(x=>x.id===String(b.id||""));if(!c)return send(res,404,{error:"chat_not_found"});if(c.owner!==user.id)return send(res,403,{error:"owner_only"});const target=String(b.username||"").trim().toLowerCase();const rec=Object.values(users).find(x=>String(x.username||"").toLowerCase()===target);if(!rec)return send(res,404,{error:"user_not_found"});if(rec.id===c.owner)return send(res,400,{error:"owner_already_owner"});c.admins=c.admins||[];if(!c.admins.includes(rec.id))c.admins.push(rec.id);saveJson(CHATS_FILE,publicChats);return send(res,200,{ok:true});});
+  }
+  if(u.pathname==="/api/polls"&&req.method==="GET"){
+    const user=sessionUser(req);
+    const polls=publicPolls.map(p=>({id:p.id,question:p.question,options:(p.options||[]).map(o=>({label:o.label,votes:Number(o.votes||0)})),ownerName:p.ownerName||"Ospite",createdAt:p.createdAt,canDelete:!!user&&p.ownerId===user.id,myVote:user?(p.voters||[]).find(v=>v.userId===user.id)?.optionIndex??null:null}));
+    return send(res,200,{polls,guest:!!user&&!user.email});
+  }
+  if(u.pathname==="/api/polls/create"&&req.method==="POST"){
+    const user=requireAuth(req,res);if(!user)return;if(!allowRate("poll-create:"+user.id,3,60*60*1000))return send(res,429,{error:"rate_limited"});
+    return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const question=String(b.question||"").replace(/[<>\u0000-\u001f\u007f]/g,"").replace(/\s+/g," ").trim().slice(0,120);const options=Array.isArray(b.options)?b.options.map(x=>String(x||"").replace(/[<>\u0000-\u001f\u007f]/g,"").replace(/\s+/g," ").trim().slice(0,60)).filter(Boolean).slice(0,8):[];if(question.length<4||options.length<2||new Set(options.map(x=>x.toLowerCase())).size!==options.length)return send(res,400,{error:"invalid_poll"});if(publicPolls.length>=50)return send(res,429,{error:"poll_limit_reached"});const poll={id:crypto.randomBytes(6).toString("hex").toUpperCase(),question,options:options.map(label=>({label,votes:0})),ownerId:user.id,ownerName:String(user.username||"Ospite").slice(0,32),createdAt:new Date().toISOString(),voters:[]};publicPolls.unshift(poll);saveJson(POLLS_FILE,publicPolls);return send(res,200,{ok:true,id:poll.id});});
+  }
+  if(u.pathname==="/api/polls/vote"&&req.method==="POST"){
+    const user=requireAuth(req,res);if(!user)return;if(!allowRate("poll-vote:"+user.id,12,10*1000))return send(res,429,{error:"rate_limited"});
+    return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const poll=publicPolls.find(p=>p.id===String(b.id||""));if(!poll)return send(res,404,{error:"poll_not_found"});const optionIndex=Number(b.optionIndex);if(!Number.isInteger(optionIndex)||optionIndex<0||optionIndex>=poll.options.length)return send(res,400,{error:"invalid_option"});poll.voters=poll.voters||[];const previous=poll.voters.find(v=>v.userId===user.id);if(previous){if(previous.optionIndex===optionIndex)return send(res,200,{ok:true,unchanged:true});if(poll.options[previous.optionIndex])poll.options[previous.optionIndex].votes=Math.max(0,Number(poll.options[previous.optionIndex].votes||0)-1);previous.optionIndex=optionIndex}else poll.voters.push({userId:user.id,optionIndex});poll.options[optionIndex].votes=Number(poll.options[optionIndex].votes||0)+1;saveJson(POLLS_FILE,publicPolls);return send(res,200,{ok:true});});
+  }
+  if(u.pathname==="/api/polls/delete"&&req.method==="POST"){
+    const user=requireAuth(req,res);if(!user)return;return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const index=publicPolls.findIndex(p=>p.id===String(b.id||""));if(index<0)return send(res,404,{error:"poll_not_found"});if(publicPolls[index].ownerId!==user.id)return send(res,403,{error:"owner_only"});publicPolls.splice(index,1);saveJson(POLLS_FILE,publicPolls);return send(res,200,{ok:true});});
   }
   if(u.pathname==="/api/stats"&&req.method==="GET")return send(res,200,{visitorCount});
   if(u.pathname==="/api/sounds"&&req.method==="GET"){const user=requireAuth(req,res);if(!user)return;return send(res,200,{sounds:visibleSounds(user).map(publicSound)})}
@@ -273,11 +314,80 @@ const server=http.createServer(async (req,res)=>{
   if(u.pathname==="/api/discord/config"&&req.method==="POST"){const user=requireAuth(req,res);if(!user)return;return parseBody(req,async(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const rec=userRecord(user);if(!rec)return send(res,404,{error:"account_not_found"});const hasWebhook=Object.prototype.hasOwnProperty.call(b,"webhookUrl");const hasInvite=Object.prototype.hasOwnProperty.call(b,"invite");const hasServerName=Object.prototype.hasOwnProperty.call(b,"serverName");const url=hasWebhook?String(b.webhookUrl||"").trim():(rec.discordWebhook||"");const invite=hasInvite?String(b.invite||"").trim():(rec.discordInvite||"");let serverName=hasServerName?String(b.serverName||"").trim().slice(0,80):(rec.discordServerName||"");if(url){if(!/^https:\/\/discord(?:app)?\.com\/api\/webhooks\//i.test(url))return send(res,400,{error:"invalid_webhook"});try{await discordGet(url,"webhook")}catch(e){return send(res,400,{error:e.message||"webhook_unreachable"})}}if(invite){try{const info=await validateInvite(invite);if(!serverName)serverName=info.name||"";rec.discordInviteCode=info.code;rec.discordGuildId=info.guildId||""}catch(e){return send(res,400,{error:e.message||"invite_not_found"})}}rec.discordWebhook=url;rec.discordInvite=invite;rec.discordServerName=serverName;saveJson(USERS_FILE,users);return send(res,200,{ok:true,configured:!!url,serverName,invite,guildId:rec.discordGuildId||""})})}
   if(u.pathname==="/api/discord/test"&&req.method==="POST"){const user=requireAuth(req,res);if(!user)return;const rec=userRecord(user);if(!rec?.discordWebhook)return send(res,400,{error:"discord_not_configured"});const payload=Buffer.from(JSON.stringify({content:"✅ VYBEX collegato correttamente a questo webhook Discord."}),"utf8");discordRequest(rec.discordWebhook,payload,{"Content-Type":"application/json","Content-Length":payload.length}).then(()=>send(res,200,{ok:true})).catch(e=>send(res,502,{error:e.message||"discord_failed"}))}
   if(u.pathname==="/api/discord/share"&&req.method==="POST"){const user=requireAuth(req,res);if(!user)return;const rec=userRecord(user);if(!rec?.discordWebhook)return send(res,400,{error:"discord_not_configured"});return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const sound=visibleSounds(user).find(x=>x.id===String(b.id||""));if(!sound)return send(res,404,{error:"sound_not_found"});try{const {body,boundary}=makeDiscordMultipart(sound,String(b.message||"" ).slice(0,1900));discordRequest(rec.discordWebhook,body,{"Content-Type":`multipart/form-data; boundary=${boundary}`,"Content-Length":body.length}).then(()=>send(res,200,{ok:true})).catch(e=>send(res,502,{error:e.message||"discord_failed"}))}catch(e){return send(res,400,{error:e.message||"discord_failed"})}})}
-  if(u.pathname==="/api/voice/create"&&req.method==="POST"){return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});let room=String(b.room||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,10);if(room.length<4)return send(res,400,{error:"room_code_invalid"});voiceRooms.set(room,{createdAt:Date.now(),messages:[],members:new Map()});return send(res,200,{ok:true,room})})}
-  if(u.pathname==="/api/voice/join"&&req.method==="POST"){return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const room=String(b.room||"").trim().toUpperCase();const peer=String(b.peer||"").trim().slice(0,40);const r=voiceRooms.get(room);if(!r)return send(res,404,{error:"room_not_found"});if(!peer)return send(res,400,{error:"peer_required"});r.members.set(peer,Date.now());return send(res,200,{ok:true,room,peers:[...r.members.keys()].filter(x=>x!==peer)})})}
-  if(u.pathname==="/api/voice/signal"&&req.method==="POST"){return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const r=voiceRooms.get(String(b.room||"").toUpperCase());if(!r)return send(res,404,{error:"room_not_found"});const to=String(b.to||"").slice(0,40);if(!to||!b.payload)return send(res,400,{error:"signal_invalid"});r.messages.push({id:crypto.randomUUID?crypto.randomUUID():crypto.randomBytes(12).toString("hex"),to,from:String(b.from||"").slice(0,40),payload:b.payload,at:Date.now()});if(r.messages.length>500)r.messages=r.messages.slice(-300);return send(res,200,{ok:true})})}
-  if(u.pathname==="/api/voice/poll"&&req.method==="GET"){const room=String(u.searchParams.get("room")||"").toUpperCase(),peer=String(u.searchParams.get("peer")||"").slice(0,40);const r=voiceRooms.get(room);if(!r)return send(res,404,{error:"room_not_found"});r.members.set(peer,Date.now());const messages=r.messages.filter(m=>m.to===peer);r.messages=r.messages.filter(m=>m.to!==peer);for(const [k,t] of r.members)if(Date.now()-t>60000)r.members.delete(k);return send(res,200,{messages,peers:[...r.members.keys()].filter(x=>x!==peer)})}
-  if(u.pathname==="/api/voice/leave"&&req.method==="POST"){return parseBody(req,(err,b)=>{const room=String(b?.room||"").toUpperCase(),peer=String(b?.peer||"").slice(0,40),r=voiceRooms.get(room);if(r){r.members.delete(peer);r.messages=r.messages.filter(m=>m.from!==peer&&m.to!==peer);if(!r.members.size&&Date.now()-r.createdAt>30000)voiceRooms.delete(room)}return send(res,200,{ok:true})})}
+  // Temporary, two-person WebRTC rooms. Guest sessions prevent completely anonymous signaling abuse.
+  if(u.pathname==="/api/voice/create"&&req.method==="POST"){
+    const user=requireAuth(req,res);if(!user)return;
+    if(!allowRate("voice-create:"+user.id,5,60*60*1000))return send(res,429,{error:"rate_limited"});
+    return parseBody(req,(err,b)=>{
+      if(err)return send(res,400,{error:"invalid_json"});
+      const room=String(b.room||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,10);
+      if(room.length<4)return send(res,400,{error:"room_code_invalid"});
+      const now=Date.now();
+      for(const [key,value] of voiceRooms){for(const [member,lastSeen] of value.members){if(now-lastSeen>60000)value.members.delete(member)}if(!value.members.size&&now-value.createdAt>120000)voiceRooms.delete(key)}
+      if(voiceRooms.has(room))return send(res,409,{error:"room_already_exists"});
+      if(voiceRooms.size>=250)return send(res,429,{error:"voice_room_limit_reached"});
+      voiceRooms.set(room,{createdAt:now,messages:[],members:new Map()});
+      return send(res,200,{ok:true,room});
+    });
+  }
+  if(u.pathname==="/api/voice/join"&&req.method==="POST"){
+    const user=requireAuth(req,res);if(!user)return;
+    return parseBody(req,(err,b)=>{
+      if(err)return send(res,400,{error:"invalid_json"});
+      const room=String(b.room||"").trim().toUpperCase();
+      const peer=String(b.peer||"").trim().slice(0,40);
+      const r=voiceRooms.get(room);
+      if(!r)return send(res,404,{error:"room_not_found"});
+      if(!/^[\p{L}\p{N}_-]{1,40}$/u.test(peer))return send(res,400,{error:"peer_invalid"});
+      const now=Date.now();for(const [member,lastSeen] of r.members){if(now-lastSeen>60000){r.members.delete(member);r.messages=r.messages.filter(m=>m.from!==member&&m.to!==member)}}
+      if(!r.members.has(peer)&&r.members.size>=2)return send(res,409,{error:"room_full"});
+      r.members.set(peer,now);
+      return send(res,200,{ok:true,room,peers:[...r.members.keys()].filter(x=>x!==peer)});
+    });
+  }
+  if(u.pathname==="/api/voice/signal"&&req.method==="POST"){
+    const user=requireAuth(req,res);if(!user)return;
+    return parseBody(req,(err,b)=>{
+      if(err)return send(res,400,{error:"invalid_json"});
+      const room=String(b.room||"").trim().toUpperCase(),r=voiceRooms.get(room);
+      if(!r)return send(res,404,{error:"room_not_found"});
+      const to=String(b.to||"").slice(0,40),from=String(b.from||"").slice(0,40),payload=b.payload;
+      if(!from||!to||from===to||!r.members.has(from)||!r.members.has(to)||!payload||typeof payload!=="object")return send(res,400,{error:"signal_invalid"});
+      const type=String(payload.type||"");
+      if(!["offer","answer","candidate"].includes(type))return send(res,400,{error:"signal_type_invalid"});
+      if(type==="candidate"){
+        const candidate=payload.candidate;
+        if(!candidate||typeof candidate!=="object"||String(candidate.candidate||"").length>4096)return send(res,400,{error:"candidate_invalid"});
+      }else{
+        const description=payload.description;
+        if(!description||description.type!==type||typeof description.sdp!=="string"||description.sdp.length>50000)return send(res,400,{error:"description_invalid"});
+      }
+      if(!allowRate("voice-signal:"+room+":"+from,120,10000))return send(res,429,{error:"rate_limited"});
+      r.members.set(from,Date.now());
+      r.messages.push({id:crypto.randomUUID?crypto.randomUUID():crypto.randomBytes(12).toString("hex"),to,from,payload,at:Date.now()});
+      if(r.messages.length>500)r.messages=r.messages.slice(-300);
+      return send(res,200,{ok:true});
+    });
+  }
+  if(u.pathname==="/api/voice/poll"&&req.method==="GET"){
+    const user=requireAuth(req,res);if(!user)return;
+    const room=String(u.searchParams.get("room")||"").trim().toUpperCase(),peer=String(u.searchParams.get("peer")||"").slice(0,40),r=voiceRooms.get(room);
+    if(!r)return send(res,404,{error:"room_not_found"});
+    if(!peer||!r.members.has(peer))return send(res,403,{error:"peer_not_joined"});
+    const now=Date.now();for(const [member,lastSeen] of r.members){if(now-lastSeen>60000){r.members.delete(member);r.messages=r.messages.filter(m=>m.from!==member&&m.to!==member)}}
+    r.members.set(peer,now);
+    const messages=r.messages.filter(m=>m.to===peer);r.messages=r.messages.filter(m=>m.to!==peer);
+    return send(res,200,{messages,peers:[...r.members.keys()].filter(x=>x!==peer)});
+  }
+  if(u.pathname==="/api/voice/leave"&&req.method==="POST"){
+    const user=requireAuth(req,res);if(!user)return;
+    return parseBody(req,(err,b)=>{
+      if(err)return send(res,400,{error:"invalid_json"});
+      const room=String(b?.room||"").trim().toUpperCase(),peer=String(b?.peer||"").slice(0,40),r=voiceRooms.get(room);
+      if(r){r.members.delete(peer);r.messages=r.messages.filter(m=>m.from!==peer&&m.to!==peer);if(!r.members.size)voiceRooms.delete(room)}
+      return send(res,200,{ok:true});
+    });
+  }
   if(u.pathname.startsWith("/sounds/")){
     const name=path.basename(u.pathname.slice("/sounds/".length));
     if(!/^[a-z0-9_-]+\.wav$/i.test(name))return send(res,404,"Not found","text/plain; charset=utf-8");

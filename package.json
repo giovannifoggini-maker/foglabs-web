@@ -1,8 +1,8 @@
 {
   "name": "foglabs",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "private": true,
-  "description": "FogLabs and VYBEX guest-first build with fully local guest soundboard and safe Pages routing.",
+  "description": "FogLabs and VYBEX guest-first build with public guest chat, shared polls, WebRTC calls, and safe Pages routing.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
