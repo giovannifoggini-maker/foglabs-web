@@ -136,9 +136,3 @@ body.fog-modal-open{overflow:hidden}
 @media(max-width:760px){.topbar{flex-wrap:wrap;gap:10px;padding:10px 14px}.brand{margin-right:auto}.actions{margin-left:auto}.brand-nav{order:3;width:100%;margin:0;gap:7px}.brand-nav-link{flex:1;max-width:220px}.fog-modal-card{padding:20px;border-radius:20px}}
 @media(max-width:450px){.brand-nav-link{grid-template-columns:20px auto;column-gap:6px;padding:6px 8px}.brand-nav-icon{width:20px;height:20px;font-size:13px}.brand-nav-link>span:nth-child(2){font-size:11px}.brand-nav-link small{font-size:9px}.fog-about-points{grid-template-columns:1fr}.fog-modal{padding:12px}.fog-modal-card{max-height:90vh;padding:17px}.fog-modal-top{margin-bottom:19px}}
 @media(prefers-reduced-motion:reduce){.brand-nav-link{transition:none}.brand-nav-link:hover{transform:none}.fog-modal-card{animation:none}}
-
-/* VYBEX 1.6.0: account/email/VIP flow intentionally disabled for a clean restart. */
-#emailLabel,#emailInput,#passwordLabel,#passwordInput,#emailBtn,#registerToggleBtn,
-#accountFields,.vip-box,#emailNote { display:none !important; }
-#loginTitle { font-size: clamp(1.8rem,4vw,2.5rem); }
-#loginText { max-width: 42rem; }

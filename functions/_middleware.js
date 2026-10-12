@@ -21,7 +21,8 @@ export async function onRequest(context) {
   const { request, env } = context;
   const incomingUrl = new URL(request.url);
 
-  // Serve ordinary pages, styles, scripts, images, and downloads from Pages.
+  // Only API/auth/audio/health routes should reach this middleware; _routes.json excludes static assets.
+  // Serve any unmatched paths through Pages static asset routing.
   if (!shouldProxy(incomingUrl.pathname)) {
     return context.next();
   }

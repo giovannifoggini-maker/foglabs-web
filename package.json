@@ -1,8 +1,8 @@
 {
   "name": "foglabs",
-  "version": "1.6.0",
+  "version": "1.6.2",
   "private": true,
-  "description": "FogLabs and VYBEX with email registration, separate VIP access, durable multi-user account storage, and cache-busted assets.",
+  "description": "FogLabs and guest-only VYBEX; static Pages routing fixed and legacy login/VIP endpoints disabled.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

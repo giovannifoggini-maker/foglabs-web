@@ -1,15 +1,4 @@
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-
-/index.html
-  Cache-Control: no-cache, no-store, must-revalidate
-
-/vybex
-  Cache-Control: no-cache, no-store, must-revalidate
-
-/app.js
-  Cache-Control: no-cache, no-store, must-revalidate
-
-/styles.css
   Cache-Control: no-cache, no-store, must-revalidate

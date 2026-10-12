@@ -11,16 +11,12 @@ const crypto = require("crypto");
   try{for(const line of fs.readFileSync(envPath,"utf8").split(/\r?\n/)){const m=line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^(["'])(.*)\1$/,"$2")}}catch{}
 })();
 
-const APP_VERSION = "1.5.5";
+const APP_VERSION = "1.6.2";
 const PORT = Number(process.env.PORT || 3100);
 const AUTO_SELECT_PORT = !process.env.PORT;
 let ACTIVE_PORT = PORT;
 let dbPool = null;
 let dbWriteQueue = Promise.resolve();
-// Keep this secret in the hosting provider's environment variables, never in the public repository.
-const VIP_EMAIL_CODE = String(process.env.VIP_EMAIL_CODE || "").trim();
-const VIP_ACCOUNT_EMAIL = "vip@local.soundboard";
-const rateBuckets = new Map();
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, "public");
 const DATA = path.join(ROOT, "data");
@@ -125,16 +121,6 @@ async function initDatabase(){
   await dbPool.query("UPDATE foglabs_state SET state = jsonb_set(state, '{users}', $1::jsonb, true), updated_at = NOW() WHERE id = 1",[JSON.stringify(users)]);
   console.log(`PostgreSQL collegato: ${Object.keys(users).length} account caricati; account persistenti in foglabs_users.`);
 }
-function consumeRateLimit(req,key,max=12,windowMs=15*60*1000){
-  const forwarded=String(req.headers["x-forwarded-for"]||"").split(",").pop().trim();
-  const ip=forwarded||req.socket?.remoteAddress||"unknown";
-  const bucketKey=ip+":"+key, now=Date.now();
-  if(rateBuckets.size>1000){for(const [k,v] of rateBuckets){if(now-v.start>windowMs)rateBuckets.delete(k);if(rateBuckets.size<=750)break;}}
-  const prior=rateBuckets.get(bucketKey);
-  if(!prior||now-prior.start>=windowMs){rateBuckets.set(bucketKey,{start:now,count:1});return true;}
-  prior.count+=1;
-  return prior.count<=max;
-}
 function cookieClear(){return `dsb_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${process.env.NODE_ENV === "production" ? "; Secure" : ""}`}
 async function saveUploadedAsset(fileName,contentType,data){
   if(dbPool){await dbPool.query("INSERT INTO foglabs_assets (name,content_type,data,updated_at) VALUES ($1,$2,$3,NOW()) ON CONFLICT (name) DO UPDATE SET content_type=EXCLUDED.content_type,data=EXCLUDED.data,updated_at=NOW()",[fileName,contentType||"application/octet-stream",data]);return;}
@@ -175,48 +161,6 @@ function publicSound(s){return {...s}}
 function serveFile(res,filePath){const abs=path.resolve(filePath);if(!abs.startsWith(path.resolve(ROOT)))return send(res,403,"Forbidden","text/plain; charset=utf-8");if(!fs.existsSync(abs))return send(res,404,"Not found","text/plain; charset=utf-8");const ext=path.extname(abs).toLowerCase();const types={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".wav":"audio/wav",".mp3":"audio/mpeg",".ogg":"audio/ogg",".m4a":"audio/mp4",".json":"application/json; charset=utf-8",".svg":"image/svg+xml",".png":"image/png"};const stat=fs.statSync(abs);const cacheControl=[".html",".js",".css"].includes(ext)?"no-cache, no-store, must-revalidate":"public, max-age=300";res.writeHead(200,{"Content-Type":types[ext]||"application/octet-stream","Content-Length":stat.size,"Cache-Control":cacheControl,"X-Content-Type-Options":"nosniff"});fs.createReadStream(abs).pipe(res)}
 function parseBody(req,cb){let raw="",tooLarge=false;req.on("data",c=>{if(tooLarge)return;if(raw.length+c.length>1024*1024){tooLarge=true;raw="";return;}raw+=c;});req.on("end",()=>{if(tooLarge)return cb(new Error("body_too_large"));try{cb(null,JSON.parse(raw||"{}"))}catch(e){cb(e)}})}
 function parseMultipart(req,boundary,onDone){const chunks=[];req.on("data",c=>chunks.push(c));req.on("end",()=>{const body=Buffer.concat(chunks),marker=Buffer.from("--"+boundary);let idx=0,file=null;while(true){const start=body.indexOf(marker,idx);if(start<0)break;const next=body.indexOf(marker,start+marker.length);if(next<0)break;const part=body.slice(start+marker.length+2,next-2);const sep=part.indexOf(Buffer.from("\r\n\r\n"));if(sep>=0){const head=part.slice(0,sep).toString("utf8"),content=part.slice(sep+4);const fn=head.match(/filename="([^"]*)"/i),ct=head.match(/Content-Type:\s*([^\r\n]+)/i);if(fn&&fn[1])file={filename:fn[1],type:ct?ct[1].trim():"application/octet-stream",data:content}}idx=next}onDone(file)})}
-function validEmail(v){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(v)}
-function validUsername(v){return /^[a-zA-Z0-9_.-]{3,24}$/.test(v)}
-function hashPassword(password,salt=crypto.randomBytes(16).toString("hex")){return {salt,hash:crypto.scryptSync(password,salt,64).toString("hex")}}
-function verifyPassword(password,record){try{const hash=crypto.scryptSync(password,record.salt,64).toString("hex");return crypto.timingSafeEqual(Buffer.from(hash,"hex"),Buffer.from(record.hash,"hex"))}catch{return false}}
-async function findUserByEmail(email){
-  if(!dbPool) return users[email]||null;
-  const result=await dbPool.query("SELECT record FROM foglabs_users WHERE email=$1",[email]);
-  if(!result.rows.length){delete users[email];delete persistedUsers[email];return null;}
-  const record={...result.rows[0].record,email:result.rows[0].record.email||email};
-  users[email]=record;
-  persistedUsers[email]=cloneRecord(record);
-  return record;
-}
-async function insertNewUser(record){
-  const email=record.email;
-  if(dbPool){
-    const result=await dbPool.query(
-      "INSERT INTO foglabs_users (email, record, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (email) DO NOTHING RETURNING email",
-      [email,JSON.stringify(record)]
-    );
-    if(!result.rows.length)return false;
-    users[email]=record;
-    persistedUsers[email]=cloneRecord(record);
-    return true;
-  }
-  if(users[email])return false;
-  users[email]=record;
-  try{await saveJson(USERS_FILE,users);return true;}
-  catch(err){delete users[email];throw err;}
-}
-async function persistUserRecord(record){
-  users[record.email]=record;
-  if(dbPool){
-    await dbPool.query(
-      "INSERT INTO foglabs_users (email, record, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (email) DO UPDATE SET record = EXCLUDED.record, updated_at = NOW()",
-      [record.email,JSON.stringify(record)]
-    );
-    persistedUsers[record.email]=cloneRecord(record);
-    return;
-  }
-  await saveJson(USERS_FILE,users);
-}
 function userRecord(user){return user&&user.email?users[user.email]||null:null}
 function visibleSounds(user){return sounds.filter(s=>!s.ownerId || s.ownerId===user.id)}
 function saveUserProgress(user,progress){const rec=userRecord(user);if(!rec)return false;const safe={
@@ -256,116 +200,21 @@ const server=http.createServer(async (req,res)=>{
   const u=new URL(req.url,`http://${req.headers.host}`);
   if(u.pathname==="/health" && req.method==="GET"){
     if(dbPool){try{await dbPool.query("SELECT 1");}catch{return send(res,503,{ok:false,database:false});}}
-    return send(res,200,{ok:true,database:!!dbPool,accountStore:dbPool?"postgres-users-table":"local-json",vipConfigured:!!VIP_EMAIL_CODE,version:APP_VERSION,environment:process.env.NODE_ENV==="production"?"production":"development"});
-  }
-  if(req.method==="POST" && ["/api/account","/api/login","/api/register","/api/vip/unlock"].includes(u.pathname)){
-    const key=u.pathname==="/api/vip/unlock"?"vip":u.pathname==="/api/login"?"login":u.pathname==="/api/register"?"register":"account";
-    const limit=key==="vip"?8:key==="login"?12:20;
-    if(!consumeRateLimit(req,key,limit))return send(res,429,{error:"too_many_attempts"},"application/json; charset=utf-8", {"Retry-After":"900"});
+    return send(res,200,{ok:true,database:!!dbPool,guestAccess:true,version:APP_VERSION,environment:process.env.NODE_ENV==="production"?"production":"development"});
   }
   // Guest entry creates a read-only session. The old test alias is development-only.
-  if(u.pathname==="/auth/guest"&&req.method==="GET"){const {sid}=createSession({id:"guest-"+crypto.randomBytes(8).toString("hex"),username:"Ospite",email:null,canEdit:false,vip:false});return send(res,302,"","text/plain; charset=utf-8",{"Location":"/","Set-Cookie":cookie(sid)})}
+  if(u.pathname==="/auth/guest"&&req.method==="GET"){const {sid,user}=createSession({id:"guest-"+crypto.randomBytes(8).toString("hex"),username:"Ospite",email:null,canEdit:false});return send(res,200,{ok:true,guest:true,user:{id:user.id,username:user.username,canEdit:false}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid),"Cache-Control":"no-store"})}
   if(u.pathname==="/auth/test"&&req.method==="GET"){
     if(process.env.NODE_ENV==="production")return send(res,404,{error:"not_found"});
-    const {sid}=createSession();return send(res,302,"","text/plain; charset=utf-8",{"Location":"/","Set-Cookie":cookie(sid)})
+    const {sid,user}=createSession({id:"guest-test-"+crypto.randomBytes(8).toString("hex"),username:"Ospite",email:null,canEdit:false});return send(res,200,{ok:true,guest:true,user:{id:user.id,username:user.username,canEdit:false}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)})
   }
   if(u.pathname==="/auth/logout"&&req.method==="POST"){const m=(req.headers.cookie||"").match(/(?:^|;\s*)dsb_session=([^;]+)/);if(m)sessions.delete(m[1]);return send(res,200,{ok:true},"application/json; charset=utf-8",{"Set-Cookie":cookieClear()})}
   if(u.pathname==="/api/me"&&req.method==="GET"){const user=sessionUser(req);return send(res,200,{authenticated:!!user,user:user?{id:user.id,username:user.username,emailProvided:!!user.email,canEdit:!!user.canEdit,vip:!!user.vip}:null,mode:process.env.NODE_ENV === "production" ? "PRODUCTION" : "DEVELOPMENT",visitorCount})}
   if(u.pathname==="/api/progress"&&req.method==="GET"){const user=requireAuth(req,res);if(!user)return;const rec=userRecord(user);return send(res,200,{progress:rec?.progress||{favorites:[],scenes:{},preferences:{rememberFavorites:true,stopOthers:false,keyboardHints:true},queue:[]}})}
   if(u.pathname==="/api/progress"&&req.method==="POST"){const user=requireAuth(req,res);if(!user)return;return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});if(!saveUserProgress(user,b))return send(res,404,{error:"account_not_found"});return send(res,200,{ok:true})})}
-  if(u.pathname==="/api/login"&&req.method==="POST") return parseBody(req,async(err,b)=>{
-    if(err)return send(res,400,{error:"invalid_json"});
-    const email=String(b.email||"").trim().toLowerCase();
-    const password=String(b.password||"");
-    if(!validEmail(email))return send(res,400,{error:"invalid_email"});
-    let rec;
-    try{rec=await findUserByEmail(email);}catch(err){console.error("Account lookup failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
-    if(!rec || !password || !verifyPassword(password,rec))return send(res,403,{error:"invalid_credentials"});
-    const sid=crypto.randomBytes(18).toString("hex");
-    const session={id:rec.id,email:rec.email,username:rec.username,canEdit:!!rec.canEdit,vip:!!rec.vip};
-    sessions.set(sid,session);
-    visitorCount+=1;
-    return send(res,200,{ok:true,created:false,user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:!!rec.canEdit,vip:!!rec.vip}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
-  });
-  if(u.pathname==="/api/register"&&req.method==="POST") return parseBody(req,async(err,b)=>{
-    if(err)return send(res,400,{error:"invalid_json"});
-    const email=String(b.email||"").trim().toLowerCase();
-    const username=String(b.username||"").trim();
-    const password=String(b.password||"");
-    const password2=String(b.password2||"");
-    if(!validEmail(email))return send(res,400,{error:"invalid_email"});
-    if(email===VIP_ACCOUNT_EMAIL)return send(res,400,{error:"reserved_email"});
-    if(!validUsername(username))return send(res,400,{error:"invalid_username"});
-    if(password.length<8)return send(res,400,{error:"weak_password"});
-    if(password!==password2)return send(res,400,{error:"password_mismatch"});
-    const hp=hashPassword(password);
-    const rec={id:"user-"+crypto.randomBytes(8).toString("hex"),email,username,salt:hp.salt,hash:hp.hash,createdAt:new Date().toISOString(),vip:false,canEdit:true,progress:{favorites:[],scenes:{},preferences:{rememberFavorites:true,stopOthers:false,keyboardHints:true},queue:[]}};
-    let created;
-    try{created=await insertNewUser(rec);}catch(err){console.error("Account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
-    if(!created)return send(res,409,{error:"account_exists"});
-    const sid=crypto.randomBytes(18).toString("hex");
-    sessions.set(sid,{id:rec.id,email:rec.email,username:rec.username,canEdit:true,vip:false});
-    visitorCount+=1;
-    return send(res,201,{ok:true,created:true,user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:true,vip:false}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
-  });
-  if(u.pathname==="/api/account"&&req.method==="POST") return parseBody(req,async(err,b)=>{
-    if(err)return send(res,400,{error:"invalid_json"});
-    const email=String(b.email||"").trim().toLowerCase();
-    const username=String(b.username||"").trim();
-    const password=String(b.password||"");
-    const password2=String(b.password2||"");
-    if(!validEmail(email))return send(res,400,{error:"invalid_email"});
-    if(email===VIP_ACCOUNT_EMAIL)return send(res,400,{error:"reserved_email"});
-
-    let rec;
-    try{rec=await findUserByEmail(email);}catch(err){console.error("Account lookup failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
-    const wasExisting=Boolean(rec);
-    if(rec){
-      if(!password || !verifyPassword(password,rec))return send(res,403,{error:"wrong_password"});
-    } else {
-      if(!validUsername(username))return send(res,400,{error:"invalid_username"});
-      if(password.length<8)return send(res,400,{error:"weak_password"});
-      if(password!==password2)return send(res,400,{error:"password_mismatch"});
-      const hp=hashPassword(password);
-      rec={id:"user-"+crypto.randomBytes(8).toString("hex"),email,username,salt:hp.salt,hash:hp.hash,createdAt:new Date().toISOString(),vip:false,canEdit:true,progress:{}};
-      try{
-        const created=await insertNewUser(rec);
-        if(!created){
-          rec=await findUserByEmail(email);
-          if(!rec)return send(res,503,{error:"storage_unavailable"});
-          return send(res,409,{error:"account_exists"});
-        }
-      }catch(err){console.error("Account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
-    }
-    const sid=crypto.randomBytes(18).toString("hex");
-    const session={id:rec.id,email:rec.email,username:rec.username,canEdit:true,vip:!!rec.vip};
-    sessions.set(sid,session);visitorCount+=1;
-    return send(res,200,{ok:true,created:!wasExisting,user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:true,vip:!!rec.vip}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
-  });
-  if(u.pathname==="/api/email"&&req.method==="POST"){return send(res,410,{error:"account_required"})}
-  if(u.pathname==="/api/vip/unlock"&&req.method==="POST"){
-    return parseBody(req,async(err,b)=>{
-      if(err)return send(res,400,{error:"invalid_json"});
-      if(!VIP_EMAIL_CODE)return send(res,503,{error:"vip_not_configured"});
-      const code=String(b.code||b.email||"").trim();
-      const provided=Buffer.from(code,"utf8"),expected=Buffer.from(VIP_EMAIL_CODE,"utf8");
-      if(provided.length!==expected.length || !crypto.timingSafeEqual(provided,expected))return send(res,403,{error:"invalid_code"});
-      let rec;
-      try{rec=await findUserByEmail(VIP_ACCOUNT_EMAIL);}catch(err){console.error("VIP account lookup failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
-      if(!rec){
-        const hp=hashPassword(crypto.randomBytes(32).toString("hex"));
-        rec={id:"vip-gio",email:VIP_ACCOUNT_EMAIL,username:"gio",salt:hp.salt,hash:hp.hash,createdAt:new Date().toISOString(),vip:true,canEdit:true,progress:{favorites:[],scenes:{},preferences:{rememberFavorites:true,stopOthers:false,keyboardHints:true},queue:[]}};
-        try{
-          const created=await insertNewUser(rec);
-          if(!created)rec=await findUserByEmail(VIP_ACCOUNT_EMAIL);
-        }catch(err){console.error("VIP account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
-      }
-      if(!rec)return send(res,503,{error:"storage_unavailable"});
-      rec.vip=true;rec.canEdit=true;rec.username="gio";
-      try{await persistUserRecord(rec);}catch(err){console.error("VIP account persist failed:",err.message);return send(res,503,{error:"storage_unavailable"});}
-      const {sid}=createSession({id:rec.id,email:rec.email,username:rec.username,canEdit:true,vip:true});
-      return send(res,200,{ok:true,canEdit:true,vip:true,user:{id:rec.id,username:rec.username,emailProvided:true,canEdit:true,vip:true}},"application/json; charset=utf-8",{"Set-Cookie":cookie(sid)});
-    });
+  // Account and VIP authentication are intentionally disabled in this guest-only rebuild.
+  if(req.method==="POST" && ["/api/account","/api/login","/api/register","/api/email","/api/vip/unlock"].includes(u.pathname)){
+    return send(res,410,{error:"account_features_disabled",message:"Account access is disabled in this build."});
   }
   if(u.pathname==="/api/chats"&&req.method==="GET"){
     const user=sessionUser(req);const chats=publicChats.map(c=>({id:c.id,name:c.name,owner:c.owner,memberCount:1+(c.admins||[]).length,createdAt:c.createdAt}));
@@ -434,17 +283,17 @@ const server=http.createServer(async (req,res)=>{
     try{if(await sendStoredAudio(res,name))return;}catch(err){console.error("Audio database read failed:",err.message);return send(res,503,{error:"audio_temporarily_unavailable"});}
     return serveFile(res,path.join(DATA,name));
   }
-  if(u.pathname==="/"||u.pathname==="/index.html") { res.writeHead(302,{Location:"/foglabs"});res.end();return; }
-  if(u.pathname==="/vybex"||u.pathname==="/vybex/")return serveFile(res,path.join(PUBLIC,"index.html"));
-  if(u.pathname==="/foglabs"||u.pathname==="/foglabs/")return serveFile(res,path.join(PUBLIC,"foglabs.html"));
+  if(u.pathname==="/"||u.pathname==="/index.html")return serveFile(res,path.join(PUBLIC,"index.html"));
+  if(u.pathname==="/vybex"||u.pathname==="/vybex/"||u.pathname==="/vybex.html")return serveFile(res,path.join(PUBLIC,"vybex.html"));
+  if(u.pathname==="/foglabs"||u.pathname==="/foglabs/"||u.pathname==="/foglabs.html")return serveFile(res,path.join(PUBLIC,"foglabs.html"));
   if(u.pathname==="/foglabs.css")return serveFile(res,path.join(PUBLIC,"foglabs.css"));
-  if(u.pathname==="/randomizer"||u.pathname==="/randomizer/")return serveFile(res,path.join(PUBLIC,"randomizer.html"));
+  if(u.pathname==="/randomizer"||u.pathname==="/randomizer/"||u.pathname==="/randomizer.html")return serveFile(res,path.join(PUBLIC,"randomizer.html"));
   if(u.pathname==="/randomizer.js")return serveFile(res,path.join(PUBLIC,"randomizer.js"));
   if(u.pathname==="/randomizer.css")return serveFile(res,path.join(PUBLIC,"randomizer.css"));
-  if(u.pathname==="/nametag"||u.pathname==="/nametag/")return serveFile(res,path.join(PUBLIC,"nametag.html"));
+  if(u.pathname==="/nametag"||u.pathname==="/nametag/"||u.pathname==="/nametag.html")return serveFile(res,path.join(PUBLIC,"nametag.html"));
   if(u.pathname==="/nametag.js")return serveFile(res,path.join(PUBLIC,"nametag.js"));
   if(u.pathname==="/nametag.css")return serveFile(res,path.join(PUBLIC,"nametag.css"));
-  if(u.pathname==="/minewiki"||u.pathname==="/minewiki/")return serveFile(res,path.join(PUBLIC,"minewiki.html"));
+  if(u.pathname==="/minewiki"||u.pathname==="/minewiki/"||u.pathname==="/minewiki.html")return serveFile(res,path.join(PUBLIC,"minewiki.html"));
   if(u.pathname==="/minewiki.css")return serveFile(res,path.join(PUBLIC,"minewiki.css"));
   if(u.pathname==="/downloads/MineWiki_Cubiomes.exe")return serveFile(res,path.join(PUBLIC,"downloads","MineWiki_Cubiomes.exe"));
   if(u.pathname==="/foglabs-logo.png")return serveFile(res,path.join(PUBLIC,"foglabs-logo.png"));
