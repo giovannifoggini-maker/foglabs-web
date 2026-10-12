@@ -1,64 +1,62 @@
-# FogLabs / VYBEX — Guest-only routing fix 1.6.2
+# FogLabs / VYBEX — modalità ospite locale 1.6.3
 
-Questa build corregge la struttura multipagina di Cloudflare Pages e mette temporaneamente fuori uso l’accesso email/password/VIP, come richiesto, così l’accesso potrà essere ricostruito da zero più avanti.
+Questa build permette di entrare in VYBEX senza account, email, password, codice VIP o backend. Il pulsante **Entra come ospite** apre il Soundboard nella stessa pagina e carica 15 suoni dimostrativi serviti come file statici da `public/sounds/`.
 
-## Correzioni incluse
+## Funziona senza backend
 
-- `public/index.html` è la home FogLabs; `public/vybex.html` è l’app VYBEX.
-- Neutralizzate le regole di `public/_redirects` (file comment-only): le vecchie riscritture `200` verso file `.html` potevano entrare in conflitto con i clean URL automatici di Cloudflare Pages.
-- Aggiunto `public/_routes.json` nella cartella di output corretta, con Pages Functions limitate a `/api/*`, `/auth/*`, `/audio/*` e `/health`.
-- L’archivio contiene una sola cartella `public`; se nel repository GitHub è rimasta una vecchia `public/public`, va eliminata manualmente dopo aver verificato che contenga solo duplicati obsoleti.
-- `/auth/guest` restituisce `200` JSON e imposta il cookie di sessione; non usa più un redirect HTTP.
-- Rimossi dalla UI VYBEX i campi email/password/registrazione/VIP e rimosse le chiamate frontend di login/registrazione/VIP.
-- Disabilitate lato backend le vecchie API di login, registrazione e VIP (`410 account_features_disabled`).
-- Aggiunta una pagina `404.html` per evitare il fallback generico SPA su URL inesistenti.
-- Il codice VIP non è presente in questo pacchetto; la variabile `VIP_EMAIL_CODE` è stata tolta dagli esempi e da `render.yaml`.
+- Accesso ospite locale; nessuna chiamata a `/auth/guest` o `/api/me` per avviare l'app.
+- Soundboard e deck DJ con 15 suoni WAV statici.
+- Preferiti, code, scene, sondaggi, mini IA offline, generatore emoji/sticker e preferenze salvati in `localStorage`.
+- Radio online quando il browser ha accesso a Internet e la stazione consente lo streaming/incorporamento.
+- Menu “Torna al menu” locale: non richiede logout server.
 
-## Struttura da mantenere in GitHub
+## Funzioni che richiedono il backend
 
-Estrai lo ZIP e carica **il contenuto interno direttamente nella radice del repository**, non la cartella che contiene tutto. Deve esserci una sola cartella `public` e `functions` deve restare a fianco di `public`:
+Le chiamate vocali tra dispositivi richiedono che il backend Node su Render sia attivo e che `BACKEND_URL` in Cloudflare Pages punti all'URL HTTPS corretto. Chat pubblica, caricamento/modifica e funzioni account/VIP restano disabilitati in questa build ospite. L'accesso base e il Soundboard non dipendono più dal backend.
+
+## Struttura corretta
 
 ```text
 repository/
 ├── functions/
 │   └── _middleware.js
 ├── public/
-│   ├── index.html        # home FogLabs
-│   ├── vybex.html        # app VYBEX
 │   ├── _routes.json
-│   ├── _headers
+│   ├── _redirects
+│   ├── index.html
+│   ├── foglabs.html
+│   ├── vybex.html
 │   ├── app.js
-│   └── ...
+│   ├── styles.css
+│   └── sounds/       # 15 file WAV serviti staticamente
+├── data/             # dati del backend locale
 ├── server.js
 ├── package.json
 └── render.yaml
 ```
 
-Non creare `public/public`.
+Non creare `public/public`. Il file `public/_routes.json` include soltanto `/api`, `/api/*`, `/auth/*`, `/audio/*` e `/health`; il percorso statico `/sounds/*` non passa dalla Function proxy. `public/_redirects` è intenzionalmente comment-only per evitare riscritture obsolete.
 
-## Cloudflare Pages
+## Pubblicazione Cloudflare Pages
 
-- Repository collegato: quello che pubblica `foglabs-web`.
-- Production branch: `main` (se è il ramo usato dal progetto).
+- Repository: quello collegato al progetto `foglabs-web`.
+- Branch di produzione: `main`.
 - Root directory: vuota.
 - Build command: `npm run check`.
-- Build output directory: `public`.
-- `BACKEND_URL`: URL HTTPS del servizio Render; non deve essere un dominio `pages.dev`.
-- Aspetta una nuova distribuzione `Success`, poi prova prima l’URL di anteprima.
+- Build output: `public`.
+- Il Soundboard ospite funziona senza `BACKEND_URL`; aggiungilo soltanto se vuoi attivare endpoint che richiedono il backend.
 
-`public/_routes.json` è già incluso nell’output `public`. Non aggiungere un altro `_routes.json` sotto `public/public`. Il file `public/_redirects` incluso contiene solo un commento e non attiva alcuna riscrittura.
+Estrai lo ZIP e copia **il contenuto** nella radice del repository, sovrascrivendo i file. Controlla ed elimina manualmente eventuali duplicati obsoleti in `public/public`, dopo averne verificato il contenuto. Fai commit/push e attendi `Success` su Cloudflare.
 
-## Render/backend
+## Test locali
 
-Il backend continua a gestire sessioni ospite, suoni predefiniti, radio/voice API e contenuti compatibili. L’endpoint `/auth/guest` non redirige più. Le route di account/VIP rispondono `410` e non sono disponibili in questa build. I vecchi record del database non vengono cancellati automaticamente.
+Con Node.js 20 o superiore:
 
-Per avvio locale: Node.js 20+, `npm install`, `npm run check`, `npm test`, `npm start`. Se la produzione usa PostgreSQL, mantenere `DATABASE_URL` configurato come variabile segreta del servizio.
+```bash
+npm install
+npm run check
+npm test
+npm start
+```
 
-## Test svolti
-
-- controllo sintassi di `server.js`, `app.js`, `nametag.js`, `randomizer.js` e middleware;
-- controllo JSON di `_routes.json`;
-- verifica che non esistano `public/public` e `_redirects` ricorsivi;
-- smoke test su home, `/index.html`, `/foglabs`, `/vybex`, sessione ospite e route account disabilitate.
-
-Questi test coprono il progetto locale. Il ciclo live `ERR_TOO_MANY_REDIRECTS` va confermato dopo aver pubblicato questa build sul progetto Cloudflare corretto; questo archivio non modifica direttamente gli account Cloudflare o GitHub.
+Questa build è stata controllata localmente. Le chiamate vocali e gli endpoint server non possono essere certificati senza verificare il deployment reale e il valore di `BACKEND_URL`.

@@ -1,8 +1,8 @@
 {
   "name": "foglabs",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "private": true,
-  "description": "FogLabs and guest-only VYBEX; static Pages routing fixed and legacy login/VIP endpoints disabled.",
+  "description": "FogLabs and VYBEX guest-first build with fully local guest soundboard and safe Pages routing.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

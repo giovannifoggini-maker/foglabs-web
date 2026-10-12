@@ -11,7 +11,7 @@ const crypto = require("crypto");
   try{for(const line of fs.readFileSync(envPath,"utf8").split(/\r?\n/)){const m=line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^(["'])(.*)\1$/,"$2")}}catch{}
 })();
 
-const APP_VERSION = "1.6.2";
+const APP_VERSION = "1.6.3";
 const PORT = Number(process.env.PORT || 3100);
 const AUTO_SELECT_PORT = !process.env.PORT;
 let ACTIVE_PORT = PORT;
@@ -278,6 +278,11 @@ const server=http.createServer(async (req,res)=>{
   if(u.pathname==="/api/voice/signal"&&req.method==="POST"){return parseBody(req,(err,b)=>{if(err)return send(res,400,{error:"invalid_json"});const r=voiceRooms.get(String(b.room||"").toUpperCase());if(!r)return send(res,404,{error:"room_not_found"});const to=String(b.to||"").slice(0,40);if(!to||!b.payload)return send(res,400,{error:"signal_invalid"});r.messages.push({id:crypto.randomUUID?crypto.randomUUID():crypto.randomBytes(12).toString("hex"),to,from:String(b.from||"").slice(0,40),payload:b.payload,at:Date.now()});if(r.messages.length>500)r.messages=r.messages.slice(-300);return send(res,200,{ok:true})})}
   if(u.pathname==="/api/voice/poll"&&req.method==="GET"){const room=String(u.searchParams.get("room")||"").toUpperCase(),peer=String(u.searchParams.get("peer")||"").slice(0,40);const r=voiceRooms.get(room);if(!r)return send(res,404,{error:"room_not_found"});r.members.set(peer,Date.now());const messages=r.messages.filter(m=>m.to===peer);r.messages=r.messages.filter(m=>m.to!==peer);for(const [k,t] of r.members)if(Date.now()-t>60000)r.members.delete(k);return send(res,200,{messages,peers:[...r.members.keys()].filter(x=>x!==peer)})}
   if(u.pathname==="/api/voice/leave"&&req.method==="POST"){return parseBody(req,(err,b)=>{const room=String(b?.room||"").toUpperCase(),peer=String(b?.peer||"").slice(0,40),r=voiceRooms.get(room);if(r){r.members.delete(peer);r.messages=r.messages.filter(m=>m.from!==peer&&m.to!==peer);if(!r.members.size&&Date.now()-r.createdAt>30000)voiceRooms.delete(room)}return send(res,200,{ok:true})})}
+  if(u.pathname.startsWith("/sounds/")){
+    const name=path.basename(u.pathname.slice("/sounds/".length));
+    if(!/^[a-z0-9_-]+\.wav$/i.test(name))return send(res,404,"Not found","text/plain; charset=utf-8");
+    return serveFile(res,path.join(PUBLIC,"sounds",name));
+  }
   if(u.pathname.startsWith("/audio/")){
     const name=path.basename(u.pathname.slice(7));
     try{if(await sendStoredAudio(res,name))return;}catch(err){console.error("Audio database read failed:",err.message);return send(res,503,{error:"audio_temporarily_unavailable"});}

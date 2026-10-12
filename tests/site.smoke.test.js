@@ -41,9 +41,20 @@ test('Cloudflare Pages multipage layout has no recursive _redirects rules', asyn
   const vybex = await fs.readFile(path.join(publicDir, 'vybex.html'), 'utf8');
   assert.match(index, /FogLabs/);
   assert.match(vybex, /<title>VYBEX<\/title>/);
-  assert.match(vybex, /\/app\.js\?v=1\.6\.2/);
-  assert.doesNotMatch(vybex, /id="emailInput"|id="passwordInput"|id="vipCodeInput"|id="registerBtn"/);
+  assert.match(vybex, /app\.js\?v=1\.6\.3/);
   const app = await fs.readFile(path.join(publicDir, 'app.js'), 'utf8');
+  assert.match(app, /const LOCAL_GUEST_SOUNDS = \[/);
+  assert.match(app, /function guestLogin\(\)/);
+  assert.doesNotMatch(app, /fetch\(['"]\/auth\/guest/);
+  assert.doesNotMatch(app, /api\(['"]\/api\/me/);
+  assert.match(app, /showBoard\(\{visitorCount:1,user:\{id:\"local-guest\"/);
+  const localSounds = await fs.readdir(path.join(publicDir, 'sounds'));
+  assert.equal(localSounds.filter(name => name.endsWith('.wav')).length, 15);
+  for (const name of localSounds.filter(name => name.endsWith('.wav'))) {
+    assert.ok((await fs.stat(path.join(publicDir, 'sounds', name))).size > 1000, `${name} should be a non-empty sound asset`);
+  }
+  assert.match(vybex, /\/app\.js\?v=1\.6\.3/);
+  assert.doesNotMatch(vybex, /id="emailInput"|id="passwordInput"|id="vipCodeInput"|id="registerBtn"/);
   assert.doesNotMatch(app, /function emailLogin|function registerAccount|function vipLogin|\/api\/vip\/unlock|\/api\/register/);
   const htmlFiles = await fs.readdir(publicDir);
   for (const name of ['foglabs.html', 'index.html', 'vybex.html', 'randomizer.html', 'nametag.html', 'minewiki.html', '404.html']) assert.ok(htmlFiles.includes(name), `missing public/${name}`);
@@ -74,6 +85,10 @@ test('backend serves FogLabs home and VYBEX directly without redirect chains; gu
     assert.equal(who.authenticated, true);
     assert.equal(who.user.username, 'Ospite');
     assert.equal(who.user.canEdit, false);
+    const soundResponse = await fetch(origin + '/sounds/coin.wav');
+    assert.equal(soundResponse.status, 200);
+    assert.match(soundResponse.headers.get('content-type') || '', /audio\/wav/);
+    assert.ok((await soundResponse.arrayBuffer()).byteLength > 1000);
     for (const route of ['/api/login', '/api/register', '/api/vip/unlock']) {
       const response = await fetch(origin + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       assert.equal(response.status, 410, `${route} should be disabled in this build`);

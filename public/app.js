@@ -1,7 +1,25 @@
 const $=id=>document.getElementById(id);
 const state={sounds:[],category:"ALL",lang:"it",visitorCount:0,canEdit:false,filter:"",radio:false,radioIndex:0,audioA:null,audioB:null,activeAudios:[],delayedTimers:[],favorites:new Set(JSON.parse(localStorage.getItem("dsb_favorites")||"[]")),queue:[],loop:false,master:1,scenes:JSON.parse(localStorage.getItem("dsb_scenes")||"{}"),lastSound:null,timer:null,progressLoaded:false,progressTimer:null};
-const T={it:{title:"Entra in VYBEX",text:"Accedi come ospite. Non servono email, password o codici.",guestBtn:"Entra come ospite",upload:"+ Carica audio",edit:"Modalità modifica disponibile solo in una futura versione.",listen:"Accesso ospite: modalità sola lettura.",users:"utenti già entrati",backendUnavailable:"Il servizio non è raggiungibile. Riprova più tardi.",random:"🎲 Suono casuale",fx:"⚡ Modalità FX"},en:{title:"Enter VYBEX",text:"Continue as a guest. No email, password, or code required.",guestBtn:"Continue as guest",upload:"+ Upload audio",edit:"Editing will return in a future version.",listen:"Guest access: read-only mode.",users:"visitors",backendUnavailable:"The service is currently unavailable. Please try again later.",random:"🎲 Random sound",fx:"⚡ FX mode"}};
+const T={it:{title:"Entra in VYBEX",text:"Accedi come ospite. Non servono email, password o codici.",guestBtn:"Entra come ospite",upload:"+ Carica audio",edit:"Modalità modifica disponibile solo in una futura versione.",listen:"Accesso ospite: modalità sola lettura.",users:"sessione ospite locale",backendUnavailable:"Il servizio non è raggiungibile. Riprova più tardi.",random:"🎲 Suono casuale",fx:"⚡ Modalità FX"},en:{title:"Enter VYBEX",text:"Continue as a guest. No email, password, or code required.",guestBtn:"Continue as guest",upload:"+ Upload audio",edit:"Editing will return in a future version.",listen:"Guest access: read-only mode.",users:"local guest session",backendUnavailable:"The service is currently unavailable. Please try again later.",random:"🎲 Random sound",fx:"⚡ FX mode"}};
 const tr=k=>(T[state.lang]||T.it)[k]||k;
+const LOCAL_GUEST_SOUNDS = [
+  {id:"guest-coin", name:"Coin Spark", category:"Gaming", icon:"🪙", volume:0.95, hotkey:"1", combo:"", pitch:1, speed:1, file:"/sounds/coin.wav"},
+  {id:"guest-bassdrop", name:"Bass Impact", category:"Impact", icon:"💥", volume:0.95, hotkey:"2", combo:"", pitch:1, speed:1, file:"/sounds/bassdrop.wav"},
+  {id:"guest-laser", name:"Laser Zap", category:"FX", icon:"⚡", volume:0.95, hotkey:"3", combo:"CTRL+SHIFT+3", pitch:1, speed:1, file:"/sounds/laser.wav"},
+  {id:"guest-pop", name:"Positive Pop", category:"UI", icon:"✨", volume:0.95, hotkey:"4", combo:"", pitch:1, speed:1, file:"/sounds/pop.wav"},
+  {id:"guest-glitch", name:"Retro Glitch", category:"Meme", icon:"👾", volume:0.95, hotkey:"5", combo:"CTRL+SHIFT+5", pitch:1, speed:1, file:"/sounds/glitch.wav"},
+  {id:"guest-airhorn", name:"Air Horn", category:"Meme", icon:"📣", volume:0.9, hotkey:"6", combo:"CTRL+SHIFT+6", pitch:1, speed:1, file:"/sounds/airhorn.wav"},
+  {id:"guest-rimshot", name:"Rimshot", category:"Meme", icon:"🥁", volume:0.9, hotkey:"7", combo:"", pitch:1, speed:1, file:"/sounds/rimshot.wav"},
+  {id:"guest-crowd", name:"Crowd Cheer", category:"Crowd", icon:"🙌", volume:0.9, hotkey:"8", combo:"", pitch:1, speed:1, file:"/sounds/crowd_cheer.wav"},
+  {id:"guest-scratch", name:"Record Scratch", category:"DJ", icon:"💿", volume:0.9, hotkey:"9", combo:"CTRL+SHIFT+9", pitch:1, speed:1, file:"/sounds/record_scratch.wav"},
+  {id:"guest-notification", name:"Notification", category:"UI", icon:"🔔", volume:0.9, hotkey:"0", combo:"", pitch:1, speed:1, file:"/sounds/notification.wav"},
+  {id:"guest-whoosh", name:"Whoosh", category:"FX", icon:"💨", volume:0.9, hotkey:"Q", combo:"", pitch:1, speed:1, file:"/sounds/whoosh.wav"},
+  {id:"guest-heartbeat", name:"Heartbeat", category:"FX", icon:"💓", volume:0.9, hotkey:"W", combo:"", pitch:1, speed:1, file:"/sounds/heartbeat.wav"},
+  {id:"guest-error", name:"Error Buzz", category:"UI", icon:"⚠️", volume:0.9, hotkey:"E", combo:"", pitch:1, speed:1, file:"/sounds/error_buzz.wav"},
+  {id:"guest-chime", name:"Magic Chime", category:"FX", icon:"✨", volume:0.9, hotkey:"R", combo:"", pitch:1, speed:1, file:"/sounds/magic_chime.wav"},
+  {id:"guest-victory", name:"Victory Fanfare", category:"Gaming", icon:"🏆", volume:0.9, hotkey:"T", combo:"CTRL+SHIFT+T", pitch:1, speed:1, file:"/sounds/victory_fanfare.wav"}
+];
+
 function toast(m){if(document.body.classList.contains('silent-mode'))return;$("toast").textContent=m;$("toast").classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>$("toast").classList.remove("show"),2300)}
 async function api(u,o={}){let r;try{r=await fetch(u,o)}catch(_){throw new Error("backend_unavailable")}const ct=r.headers.get("content-type")||"";let d={};if(ct.includes("application/json")){d=await r.json().catch(()=>({}))}else{const body=await r.text().catch(()=>"");if(!r.ok||body.trim().startsWith("<!DOCTYPE")||body.trim().startsWith("<html"))throw new Error("backend_unavailable")}if(!r.ok)throw new Error(d.error||"request_failed");return d}
 function scheduleProgressSave(){if(!state.progressLoaded||!state.canEdit)return;clearTimeout(state.progressTimer);state.progressTimer=setTimeout(async()=>{try{await api('/api/progress',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({favorites:[...state.favorites],scenes:state.scenes,preferences:{rememberFavorites:$('rememberFavorites').checked,stopOthers:$('stopOthers').checked,keyboardHints:$('keyboardHints').checked},queue:state.queue})})}catch{toast('⚠️ Impossibile salvare i progressi')}} ,250)}
@@ -53,15 +71,26 @@ async function duplicateEditor(){if(!editingSound)return;try{const r=await api('
 function normalizeCombo(e){const p=[];if(e.ctrlKey)p.push('CTRL');if(e.altKey)p.push('ALT');if(e.shiftKey)p.push('SHIFT');if(e.metaKey)p.push('META');let k=e.key.toUpperCase();if(['CONTROL','SHIFT','ALT','META'].includes(k))return '';if(k===' ')k='SPACE';p.push(k);return p.join('+')}
 function showBoard(me){state.visitorCount=me.visitorCount??0;state.canEdit=false;const previewView=$("previewView");if(previewView)previewView.hidden=true;const loginView=$("loginView");loginView.hidden=true;loginView.setAttribute('aria-hidden','true');loginView.classList.add('completed');document.body.classList.add('authenticated');$("boardView").hidden=false;$("logoutBtn").hidden=false;$("welcome").textContent=`Ciao, ${me.user?.username||'Ospite'}!`;$("modeStatus").textContent=state.canEdit?' • MODIFICA':' • SOLO ASCOLTO';applyLang();fillDecks()}
 function showLoginError(message){$("loginError").textContent=message;}
-async function guestLogin(){
+function guestLogin(){
   const button=$("guestBtn");
   if(button)button.disabled=true;
   showLoginError("");
   try{
-    await api('/auth/guest',{cache:'no-store'});
-    location.assign('/vybex');
-  }catch(e){
-    showLoginError(tr('backendUnavailable'));
+    // Guest mode is intentionally local: the soundboard must open even if Render or
+    // BACKEND_URL is unavailable. Server-only features remain disabled in this build.
+    state.sounds=LOCAL_GUEST_SOUNDS.map(sound=>({...sound}));
+    state.canEdit=false;
+    state.vip=false;
+    state.progressLoaded=false;
+    showBoard({visitorCount:1,user:{id:"local-guest",username:"Ospite",canEdit:false,vip:false}});
+    renderTabs();
+    renderGrid();
+    fillDecks();
+    renderQueue();
+    renderScenes();
+  }catch(error){
+    console.error("VYBEX guest mode could not start:",error);
+    showLoginError("Non riesco ad aprire VYBEX. Ricarica la pagina e riprova.");
     if(button)button.disabled=false;
   }
 }
@@ -131,7 +160,7 @@ function init(){
  function openFogModal(which='about'){if(!fogModal)return;fogAbout.hidden=which!=='about';fogModels.hidden=which!=='models';fogModal.setAttribute('aria-labelledby',which==='about'?'fogModalTitle':'fogModelsTitle');fogModal.hidden=false;fogModal.setAttribute('aria-hidden','false');document.body.classList.add('fog-modal-open');$('closeFogModalBtn')?.focus();}
  function closeFogModal(){if(!fogModal)return;fogModal.hidden=true;fogModal.setAttribute('aria-hidden','true');document.body.classList.remove('fog-modal-open');}
  $('otherModelsBtn')?.addEventListener('click',()=>openFogModal('models'));$('fogExploreModelsBtn')?.addEventListener('click',()=>openFogModal('models'));$('fogBackAboutBtn')?.addEventListener('click',()=>openFogModal('about'));$('closeFogModalBtn')?.addEventListener('click',closeFogModal);document.querySelector('[data-close-fog-modal]')?.addEventListener('click',closeFogModal);document.addEventListener('keydown',e=>{if(e.key==='Escape'&&fogModal&&!fogModal.hidden)closeFogModal()});
- $("langBtn").onclick=()=>{state.lang=state.lang==='it'?'en':'it';applyLang()};$("guestBtn").onclick=guestLogin;$("logoutBtn").onclick=async()=>{try{await api('/auth/logout',{method:'POST'})}finally{location.assign('/')}};
+ $("langBtn").onclick=()=>{state.lang=state.lang==='it'?'en':'it';applyLang()};$("guestBtn").onclick=guestLogin;$("logoutBtn").onclick=()=>{stopRadio();stopAll();const preview=$("previewView"),login=$("loginView"),board=$("boardView");if(board)board.hidden=true;if(login){login.hidden=true;login.setAttribute('aria-hidden','true')}if(preview)preview.hidden=false;document.body.classList.remove('authenticated');window.scrollTo({top:0,behavior:'smooth'});};
  $("fileInput").onchange=async e=>{if(!state.canEdit){e.target.value='';return toast('Il caricamento audio richiede una versione futura con permessi.')}const f=e.target.files[0];if(!f)return;const fd=new FormData();fd.append('file',f);try{const r=await api('/api/sounds/upload',{method:'POST',body:fd});state.sounds.push(r.sound);state.category='ALL';renderTabs();renderGrid();fillDecks();toast('Audio caricato.')}catch(err){toast(err.message==='unsupported_format'?'Formato non supportato.':'Upload non riuscito.')}finally{e.target.value=''}};
  $("searchInput").oninput=e=>{state.filter=e.target.value.trim().toLowerCase();renderGrid()};
  document.querySelectorAll('.main-tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.main-tab').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.panel').forEach(p=>p.hidden=true);$('panel-'+b.dataset.panel).hidden=false});
@@ -296,7 +325,7 @@ initMiniAI();
 
  document.addEventListener('keydown',e=>{if(['INPUT','TEXTAREA','BUTTON','SELECT','A'].includes(e.target.tagName))return;const combo=normalizeCombo(e);let s=state.sounds.find(x=>x.combo&&x.combo.toUpperCase()===combo)||state.sounds.find(x=>x.hotkey&&x.hotkey.toUpperCase()===e.key.toUpperCase());if(s){e.preventDefault();playSound(s)}});
  
-applyLang(); renderRadioList();api('/api/me').then(async me=>{state.visitorCount=me.visitorCount??0;if(me.authenticated){const r=await api('/api/sounds');state.sounds=r.sounds;showBoard(me);await loadProgress();renderGrid()}}).catch(()=>{});
+applyLang(); renderRadioList(); // Guest-only build: app startup must not depend on /api/me or a backend session.
 }
 init();
 
@@ -308,7 +337,7 @@ init();
  const status=t=>$('voiceStatus').textContent=t;
  const post=async(url,data)=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const j=await r.json();if(!r.ok)throw Error(j.error||'Errore di rete');return j};
  const signal=async(to,payload)=>post('/api/voice/signal',{room,from:peer,to,payload});
- async function start(create){if(!navigator.mediaDevices?.getUserMedia)throw Error('Il browser blocca il microfono su questo indirizzo. Prova localhost sul PC o configura HTTPS per la rete locale.');
+ async function start(create){if(!navigator.mediaDevices?.getUserMedia)throw Error('Il browser blocca il microfono su questo indirizzo. Prova HTTPS oppure localhost.');
   stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
   peer=(($('voiceName').value||'Utente').trim().replace(/[^\p{L}\p{N}_-]/gu,'').slice(0,24)||'Utente')+'-'+Math.random().toString(36).slice(2,7);
   room=$('voiceRoom').value.trim().toUpperCase();
@@ -325,7 +354,7 @@ init();
  }
  async function poll(){if(!room||!peer)return;try{const r=await fetch('/api/voice/poll?room='+encodeURIComponent(room)+'&peer='+encodeURIComponent(peer));if(!r.ok)return;const d=await r.json();$('voicePeople').textContent='Dispositivi nella stanza: '+(d.peers.length+1);for(const m of d.messages){if(seen.has(m.id))continue;seen.add(m.id);const p=m.payload;if(p.type==='offer'&&pc){await pc.setRemoteDescription(p.description);const answer=await pc.createAnswer();await pc.setLocalDescription(answer);await signal(m.from,{type:'answer',description:pc.localDescription});}else if(p.type==='answer'&&pc){await pc.setRemoteDescription(p.description);}else if(p.type==='candidate'&&pc&&p.candidate){try{await pc.addIceCandidate(p.candidate)}catch{}}}}catch{}}
  $('voiceCreate').onclick=()=>start(true).catch(e=>status('Errore: '+e.message));
- $('voiceJoin').onclick=async()=>{try{await start(false);const r=await fetch('/api/voice/poll?room='+encodeURIComponent(room)+'&peer='+encodeURIComponent(peer));const d=await r.json();const other=d.peers[0];if(!other)status('Entrato nella stanza. Attendo l’altro dispositivo…');else{const offer=await pc.createOffer();await pc.setLocalDescription(offer);await signal(other,{type:'offer',description:pc.localDescription});status('Invito vocale inviato. Connessione in corso…')}}catch(e){status('Errore: '+e.message)}};
+ $('voiceJoin').onclick=async()=>{try{await start(false);const r=await fetch('/api/voice/poll?room='+encodeURIComponent(room)+'&peer='+encodeURIComponent(peer));const d=await r.json();const other=d.peers[0];if(!other)status('Entrato nella stanza. Attendo l’altro dispositivo…');else{const offer=await pc.createOffer();await pc.setLocalDescription(offer);await signal(other,{type:'offer',description:pc.localDescription});status('Invito vocale inviato. Connessione in corso…')}}catch(e){status('Chiamate non disponibili: il backend online deve essere configurato. '+e.message)}};
  $('voiceMute').onclick=()=>{muted=!muted;if(stream)stream.getAudioTracks().forEach(t=>t.enabled=!muted);$('voiceMute').textContent=muted?'🔇 Riattiva microfono':'🎙️ Muto';};
  $('voiceHangup').onclick=async()=>{if(pollTimer)clearInterval(pollTimer);pollTimer=null;if(pc)pc.close();pc=null;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('voiceRemoteAudio').srcObject=null;if(room&&peer)try{await post('/api/voice/leave',{room,peer})}catch{};room='';peer='';$('voiceCreate').disabled=false;$('voiceJoin').disabled=false;$('voiceMute').disabled=true;$('voiceHangup').disabled=true;$('voicePeople').textContent='';status('Chiamata terminata.');};
 })();
